@@ -249,7 +249,9 @@ local function _showMultiSelectionDialog(parent_ui, title, setting_key, options_
             if ok then
                 if type(ok_callback) == "function" then
                     ok_callback(err)
-                else
+                elseif err then
+                    -- err is nil when the selection was cleared (Config.deleteSetting path),
+                    -- so only show the count message when something was actually saved.
                     Ui.showInfoMessage(string.format(T("%d items selected for %s."), err, title))
                 end
             else

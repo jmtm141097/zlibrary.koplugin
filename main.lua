@@ -454,6 +454,8 @@ end
 function Zlibrary:showMultiSearchDialog(def_position, def_search_input)
     if not Config.getSetting(Config.SETTINGS_FIRST_LAUNCH_DONE_KEY) then
         Config.saveSetting(Config.SETTINGS_FIRST_LAUNCH_DONE_KEY, true)
+        -- Flush immediately so a crash later doesn't lose the flag
+        pcall(function() G_reader_settings:flush() end)
         Ui.showFirstLaunchDialog(self, function()
             self:showMultiSearchDialog(def_position, def_search_input)
         end)

@@ -8,6 +8,7 @@ local ImageWidget = require("ui/widget/imagewidget")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local TextWidget = require("ui/widget/textwidget")
@@ -61,6 +62,12 @@ function CoverGrid:init()
     self._first_visible_row = 0
     self.books = self.books or {}
     self.dimen = Geom:new{ w = self.width, h = self.height }
+
+    -- Persistent container: never replaced, only its children are cleared/re-added.
+    -- Replacing self[1] on a live widget can cause KOReader to crash because the
+    -- C rendering layer may still hold a reference to the old VerticalGroup.
+    self._vg = VerticalGroup:new{ align = "left" }
+    self[1] = self._vg
     self:_build()
 
     if Device:isTouchDevice() then
@@ -77,7 +84,12 @@ function CoverGrid:_build()
     local max_first  = math.max(0, total_rows - self._visible_rows)
     self._first_visible_row = math.min(self._first_visible_row, max_first)
 
-    local vg = VerticalGroup:new{ align = "left" }
+    -- Clear children using table.remove so LuaJIT's # operator stays at 0 after clearing.
+    -- Setting self._vg[i] = nil leaves holes: # may still return the old length, causing
+    -- table.insert to place new rows at wrong indices (4, 5... when 1-3 are nil) → crash.
+    while #self._vg > 0 do
+        table.remove(self._vg)
+    end
 
     for r = 0, self._visible_rows - 1 do
         local actual_row = self._first_visible_row + r
@@ -88,14 +100,16 @@ function CoverGrid:_build()
             if book then
                 table.insert(row, self:_visualCell(book))
             else
-                table.insert(row, FrameContainer:new{
-                    width    = self._cell_w,
-                    height   = self._cell_h,
-                    bordersize = 0,
+                -- WidgetContainer is the only safe placeholder: getSize() returns self.dimen
+                -- directly (no child needed), and paintTo() guards with "if self[1]".
+                -- FrameContainer crashes in getSize() without a child; CenterContainer
+                -- crashes in paintTo() without a child (no nil guard in this KOReader version).
+                table.insert(row, WidgetContainer:new{
+                    dimen = Geom:new{ w = self._cell_w, h = self._cell_h },
                 })
             end
         end
-        table.insert(vg, row)
+        table.insert(self._vg, row)
     end
 
     -- Page indicator when content overflows visible area
@@ -109,10 +123,8 @@ function CoverGrid:_build()
                 face = Font:getFace("cfont", 14),
             }
         }
-        table.insert(vg, indicator)
+        table.insert(self._vg, indicator)
     end
-
-    self[1] = vg
 end
 
 function CoverGrid:_visualCell(book)
@@ -286,15 +298,17 @@ function SearchDialog:init()
     }
     local lang_btn = Button:new{
         text = T("Lang"), width = filter_btn_w, bordersize = Size.border.thin,
-        callback = function() Ui().showLanguageSelectionDialog(self) end,
+        -- Pass nil, not self: passing a SearchDialog (InputContainer) as Menu parent
+        -- causes KOReader to call show_parent:onShow() on close, corrupting the widget stack.
+        callback = function() Ui().showLanguageSelectionDialog(nil) end,
     }
     local fmt_btn = Button:new{
         text = T("Fmt"), width = filter_btn_w, bordersize = Size.border.thin,
-        callback = function() Ui().showExtensionSelectionDialog(self) end,
+        callback = function() Ui().showExtensionSelectionDialog(nil) end,
     }
     local sort_btn = Button:new{
         text = T("Sort"), width = filter_btn_w, bordersize = Size.border.thin,
-        callback = function() Ui().showOrdersSelectionDialog(self) end,
+        callback = function() Ui().showOrdersSelectionDialog(nil) end,
     }
 
     local search_row = HorizontalGroup:new{
