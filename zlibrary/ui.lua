@@ -324,6 +324,85 @@ function Ui.showGenericInputDialog(title, setting_key, current_value_or_default,
     dialog:onShowKeyboard()
 end
 
+function Ui.showFirstLaunchDialog(plugin_instance, on_done_callback)
+    local function done()
+        if type(on_done_callback) == "function" then on_done_callback() end
+    end
+
+    local email_dialog
+    local function showPasswordDialog(email)
+        local pwd_dialog
+        pwd_dialog = InputDialog:new{
+            title = T("Set password"),
+            text_type = "password",
+            buttons = {{
+                {
+                    text = T("Back"),
+                    callback = function()
+                        _closeAndUntrackDialog(pwd_dialog)
+                        Ui.showFirstLaunchDialog(plugin_instance, on_done_callback)
+                    end,
+                },
+                {
+                    text = T("Log in"),
+                    callback = function()
+                        local password = util.trim(pwd_dialog:getInputText() or "")
+                        _closeAndUntrackDialog(pwd_dialog)
+                        if password == "" then done(); return end
+                        Config.saveSetting(Config.SETTINGS_USERNAME_KEY, email)
+                        Config.saveSetting(Config.SETTINGS_PASSWORD_KEY, password)
+                        plugin_instance:login(function(login_ok)
+                            if not login_ok then
+                                Ui.showErrorMessage(T("Login failed. You can update credentials in Settings."))
+                            end
+                            done()
+                        end)
+                    end,
+                },
+            }},
+        }
+        _showAndTrackDialog(pwd_dialog)
+        pwd_dialog:onShowKeyboard()
+    end
+
+    local welcome_dialog
+    welcome_dialog = ConfirmBox:new{
+        title = T("Welcome to Z-Library"),
+        text = T("Log in to access personalized recommendations and higher download limits.\n\nYou can skip this and set credentials later in Settings."),
+        ok_text = T("Log in"),
+        cancel_text = T("Skip"),
+        ok_callback = function()
+            email_dialog = InputDialog:new{
+                title = T("Enter your email"),
+                input_hint = T("Email"),
+                buttons = {{
+                    {
+                        text = T("Cancel"),
+                        id = "close",
+                        callback = function()
+                            _closeAndUntrackDialog(email_dialog)
+                            done()
+                        end,
+                    },
+                    {
+                        text = T("Next"),
+                        callback = function()
+                            local email = util.trim(email_dialog:getInputText() or "")
+                            _closeAndUntrackDialog(email_dialog)
+                            if email == "" then done(); return end
+                            showPasswordDialog(email)
+                        end,
+                    },
+                }},
+            }
+            _showAndTrackDialog(email_dialog)
+            email_dialog:onShowKeyboard()
+        end,
+        cancel_callback = done,
+    }
+    _showAndTrackDialog(welcome_dialog)
+end
+
 function Ui.showSearchDialog(parent_zlibrary, def_input)
     -- save last search input
     if Ui._last_search_input and not def_input then
@@ -449,6 +528,36 @@ function Ui.createBookMenuItem(book_data, parent_zlibrary_instance)
     }
 end
 
+function Ui.createColumnSearchItem(book_data, parent_zlibrary_instance)
+    local title = util.htmlEntitiesToUtf8((type(book_data.title) == "string" and book_data.title) or T("Unknown Title"))
+    local author = util.htmlEntitiesToUtf8((type(book_data.author) == "string" and book_data.author) or T("Unknown Author"))
+    local combined_text = title .. "\n" .. author
+
+    local right_parts = {}
+    local selected_extensions = Config.getSearchExtensions()
+    if book_data.format and book_data.format ~= "N/A" then
+        if #selected_extensions ~= 1 then table.insert(right_parts, book_data.format) end
+    end
+    if book_data.size and book_data.size ~= "N/A" then table.insert(right_parts, book_data.size) end
+    if book_data.rating and book_data.rating ~= "N/A" then table.insert(right_parts, "\u{2605}" .. book_data.rating) end
+    local mandatory_text = #right_parts > 0 and table.concat(right_parts, " \u{b7} ") or nil
+
+    return {
+        text = combined_text,
+        mandatory = mandatory_text,
+        shortcut = book_data.hash and ("cover:" .. book_data.hash) or nil,
+        callback = function()
+            if book_data.needs_detail_fetch then
+                parent_zlibrary_instance:onSelectSearchBook(book_data)
+            else
+                Ui.showBookDetails(parent_zlibrary_instance, book_data)
+            end
+        end,
+        keep_menu_open = true,
+        original_book_data_ref = book_data,
+    }
+end
+
 function Ui.createSearchResultsMenu(parent_ui_ref, query_string, initial_menu_items, on_goto_page_handler)
     local search_order_name = Config.getSearchOrderName()
     local menu = Menu:new{
@@ -456,7 +565,7 @@ function Ui.createSearchResultsMenu(parent_ui_ref, query_string, initial_menu_it
         subtitle = string.format("%s: %s", T("Sort by"), search_order_name),
         item_table = initial_menu_items,
         parent = parent_ui_ref,
-        items_per_page = 5, -- Reducido de 10 a 5 para forzar mayor altura (ver bien las portadas)
+        items_per_page = 4,
         show_captions = true,
         onGotoPage = on_goto_page_handler,
         is_popout = false,

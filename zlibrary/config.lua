@@ -25,6 +25,8 @@ Config.SETTINGS_TIMEOUT_DOWNLOAD_KEY = "zlibrary_timeout_download"
 Config.SETTINGS_TIMEOUT_COVER_KEY = "zlibrary_timeout_cover"
 Config.SETTINGS_TIMEOUT_BOOK_COMMENTS_KEY = "zlibrary_timeout_book_comments"
 Config.CREDENTIALS_FILENAME = "zlibrary_credentials.lua"
+Config.SETTINGS_FIRST_LAUNCH_DONE_KEY = "zlibrary_first_launch_done"
+Config.SETTINGS_RECENT_SEARCHES_KEY = "zlibrary_recent_searches"
 
 Config.DEFAULT_DOWNLOAD_DIR_FALLBACK = G_reader_settings:readSetting("home_dir")
              or require("apps/filemanager/filemanagerutil").getDefaultDir()
@@ -510,6 +512,22 @@ end
 
 function Config.setBookCommentsTimeout(block_timeout, total_timeout)
     Config.setTimeoutConfig(Config.SETTINGS_TIMEOUT_BOOK_COMMENTS_KEY, block_timeout, total_timeout)
+end
+
+function Config.addRecentSearch(query)
+    if not query or util.trim(query) == "" then return end
+    query = util.trim(query)
+    local searches = Config.getSetting(Config.SETTINGS_RECENT_SEARCHES_KEY) or {}
+    for i = #searches, 1, -1 do
+        if searches[i] == query then table.remove(searches, i) end
+    end
+    table.insert(searches, 1, query)
+    while #searches > 10 do table.remove(searches) end
+    Config.saveSetting(Config.SETTINGS_RECENT_SEARCHES_KEY, searches)
+end
+
+function Config.getRecentSearches()
+    return Config.getSetting(Config.SETTINGS_RECENT_SEARCHES_KEY) or {}
 end
 
 return Config

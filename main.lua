@@ -452,16 +452,29 @@ function Zlibrary:_fetchBookList(options, ...)
 end  
 
 function Zlibrary:showMultiSearchDialog(def_position, def_search_input)
+    if not Config.getSetting(Config.SETTINGS_FIRST_LAUNCH_DONE_KEY) then
+        Config.saveSetting(Config.SETTINGS_FIRST_LAUNCH_DONE_KEY, true)
+        Ui.showFirstLaunchDialog(self, function()
+            self:showMultiSearchDialog(def_position, def_search_input)
+        end)
+        return
+    end
+
     local search_dialog
     search_dialog = MultiSearchDialog:new{
-        title = T("Z-library search"),
+        title = T("Z-library"),
         def_position = def_position,
         def_search_input = def_search_input,
+        cover_grid_mode = true,
         on_select_book_callback = function(book)
             self:onSelectRecommendedBook(book)
         end,
         on_search_callback = function(def_input)
             Ui.showSearchDialog(self, def_input)
+        end,
+        on_perform_search_callback = function(query)
+            Config.addRecentSearch(query)
+            self:performSearch(query)
         end,
         on_similar_books_callback = function(book)
             self:searchSimilarBooks(book)
@@ -1010,6 +1023,7 @@ function Zlibrary:performSearch(query)
 
             Ui.closeMessage(loading_msg)
             logger.info(string.format("Zlibrary:performSearch - Fetch successful. Results: %d", #api_result.results))
+            Config.addRecentSearch(query)
             self.current_search_query = query
             self.current_search_api_page_loaded = current_page_to_search
             self.all_search_results_data = api_result.results
@@ -1059,7 +1073,7 @@ function Zlibrary:displaySearchResults(initial_book_data_list, query_string)
 
     for i = 1, #initial_book_data_list do
         local book_menu_item_data = initial_book_data_list[i]
-        menu_items[i] = Ui.createBookMenuItem(book_menu_item_data, self)
+        menu_items[i] = Ui.createColumnSearchItem(book_menu_item_data, self)
     end
 
     if self.active_results_menu then
@@ -1120,7 +1134,7 @@ function Zlibrary:displaySearchResults(initial_book_data_list, query_string)
                     local new_menu_items_to_add = {}
                     for _, book_api_data_transformed in ipairs(new_book_objects) do
                         table.insert(self.all_search_results_data, book_api_data_transformed)
-                        table.insert(new_menu_items_to_add, Ui.createBookMenuItem(book_api_data_transformed, self))
+                        table.insert(new_menu_items_to_add, Ui.createColumnSearchItem(book_api_data_transformed, self))
                     end
                     Ui.appendSearchResultsToMenu(menu_instance, new_menu_items_to_add)
                     if api_result_more._covers_timed_out then
