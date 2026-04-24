@@ -405,6 +405,70 @@ function Ui.showFirstLaunchDialog(plugin_instance, on_done_callback)
     _showAndTrackDialog(welcome_dialog)
 end
 
+function Ui.showCredentialsDialog(plugin_instance)
+    local current_email = Config.getSetting(Config.SETTINGS_USERNAME_KEY) or ""
+
+    local function showPasswordDialog(email)
+        local pwd_dialog
+        pwd_dialog = InputDialog:new{
+            title = T("Set password"),
+            text_type = "password",
+            buttons = {{
+                {
+                    text = T("Cancel"),
+                    callback = function()
+                        _closeAndUntrackDialog(pwd_dialog)
+                    end,
+                },
+                {
+                    text = T("Verify"),
+                    callback = function()
+                        local password = util.trim(pwd_dialog:getInputText() or "")
+                        _closeAndUntrackDialog(pwd_dialog)
+                        if password == "" then return end
+                        Config.saveSetting(Config.SETTINGS_USERNAME_KEY, email)
+                        Config.saveSetting(Config.SETTINGS_PASSWORD_KEY, password)
+                        plugin_instance:login(function(ok)
+                            if ok then
+                                Ui.showInfoMessage(T("Login successful!"))
+                            end
+                        end)
+                    end,
+                },
+            }},
+        }
+        _showAndTrackDialog(pwd_dialog)
+        pwd_dialog:onShowKeyboard()
+    end
+
+    local email_dialog
+    email_dialog = InputDialog:new{
+        title = T("Verify credentials"),
+        input_hint = T("Email"),
+        text = current_email,
+        buttons = {{
+            {
+                text = T("Cancel"),
+                id = "close",
+                callback = function()
+                    _closeAndUntrackDialog(email_dialog)
+                end,
+            },
+            {
+                text = T("Next"),
+                callback = function()
+                    local email = util.trim(email_dialog:getInputText() or "")
+                    _closeAndUntrackDialog(email_dialog)
+                    if email == "" then return end
+                    showPasswordDialog(email)
+                end,
+            },
+        }},
+    }
+    _showAndTrackDialog(email_dialog)
+    email_dialog:onShowKeyboard()
+end
+
 function Ui.showSearchDialog(parent_zlibrary, def_input)
     -- save last search input
     if Ui._last_search_input and not def_input then
@@ -535,12 +599,19 @@ function Ui.createColumnSearchItem(book_data, parent_zlibrary_instance)
     local author = util.htmlEntitiesToUtf8((type(book_data.author) == "string" and book_data.author) or T("Unknown Author"))
     local combined_text = title .. "\n" .. author
 
+    -- mandatory column: Lang · Format · Size · Year · ★Rating
     local right_parts = {}
+    if book_data.lang and book_data.lang ~= "N/A" and book_data.lang ~= "" then
+        table.insert(right_parts, book_data.lang)
+    end
     local selected_extensions = Config.getSearchExtensions()
     if book_data.format and book_data.format ~= "N/A" then
         if #selected_extensions ~= 1 then table.insert(right_parts, book_data.format) end
     end
     if book_data.size and book_data.size ~= "N/A" then table.insert(right_parts, book_data.size) end
+    if book_data.year and book_data.year ~= "N/A" and tostring(book_data.year) ~= "0" then
+        table.insert(right_parts, tostring(book_data.year))
+    end
     if book_data.rating and book_data.rating ~= "N/A" then table.insert(right_parts, "\u{2605}" .. book_data.rating) end
     local mandatory_text = #right_parts > 0 and table.concat(right_parts, " \u{b7} ") or nil
 

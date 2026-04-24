@@ -19,6 +19,7 @@ local ButtonDialog = require("ui/widget/buttondialog")
 local TitleBar = require("ui/widget/titlebar")
 local ToggleSwitch = require("ui/widget/toggleswitch")
 local GestureRange = require("ui/gesturerange")
+local InputDialog = require("ui/widget/inputdialog")
 local Screen = Device.screen
 local T = require("zlibrary.gettext")
 local Cache = require("zlibrary.cache")
@@ -112,18 +113,55 @@ function CoverGrid:_build()
         table.insert(self._vg, row)
     end
 
-    -- Page indicator when content overflows visible area
+    -- Pagination buttons when content overflows visible area
     if total_rows > self._visible_rows then
         local cur_page = self._first_visible_row + 1
         local max_page = math.max(1, total_rows - self._visible_rows + 1)
-        local indicator = CenterContainer:new{
-            dimen = Geom:new{ w = self.width, h = Screen:scaleBySize(22) },
-            TextWidget:new{
-                text = string.format("%d / %d", cur_page, max_page),
-                face = Font:getFace("cfont", 14),
-            }
+        local nav_h    = Screen:scaleBySize(36)
+        local btn_w    = math.floor(self.width * 0.25)
+        local label_w  = self.width - 2 * btn_w
+
+        local prev_btn = Button:new{
+            text      = "\u{25C4}",
+            width     = btn_w,
+            bordersize = Size.border.thin,
+            enabled   = self._first_visible_row > 0,
+            callback  = function()
+                self._first_visible_row = math.max(0, self._first_visible_row - self._visible_rows)
+                self:_build()
+                UIManager:setDirty("all", "ui")
+            end,
         }
-        table.insert(self._vg, indicator)
+
+        local next_btn = Button:new{
+            text      = "\u{25BA}",
+            width     = btn_w,
+            bordersize = Size.border.thin,
+            enabled   = self._first_visible_row < max_first,
+            callback  = function()
+                self._first_visible_row = math.min(
+                    self._first_visible_row + self._visible_rows, max_first)
+                self:_build()
+                UIManager:setDirty("all", "ui")
+            end,
+        }
+
+        local nav_row = CenterContainer:new{
+            dimen = Geom:new{ w = self.width, h = nav_h },
+            HorizontalGroup:new{
+                align = "center",
+                prev_btn,
+                CenterContainer:new{
+                    dimen = Geom:new{ w = label_w, h = nav_h },
+                    TextWidget:new{
+                        text = string.format("%d / %d", cur_page, max_page),
+                        face = Font:getFace("cfont", 14),
+                    },
+                },
+                next_btn,
+            },
+        }
+        table.insert(self._vg, nav_row)
     end
 end
 
@@ -282,65 +320,45 @@ function SearchDialog:init()
     local tb_h = titlebar:getSize().h
 
     -- ── Search bar ────────────────────────────────────────────────────────
+    local go_btn_w     = Screen:scaleBySize(52)
     local filter_btn_w = Screen:scaleBySize(52)
-    local search_w     = fiw - filter_btn_w * 3
+    local input_w      = fiw - go_btn_w - filter_btn_w
 
-    local search_btn = Button:new{
-        text      = T("\u{f002}  Search\u{2026}"),
-        width     = search_w,
+    self._last_query = self.def_search_input or ""
+
+    self._search_display_btn = Button:new{
+        text      = self._last_query ~= "" and self._last_query or T("Search books\u{2026}"),
+        width     = input_w,
         align     = "left",
         bordersize = Size.border.thin,
+        callback  = function() self:_openSearchInput() end,
+    }
+
+    local go_btn = Button:new{
+        text      = T("\u{f002}"),
+        width     = go_btn_w,
+        bordersize = Size.border.thin,
         callback  = function()
-            local u    = Ui()
-            local last = u._last_search_input or self.def_search_input
-            self.on_search_callback(last)
+            if self._last_query ~= "" then
+                self:_doSearch(self._last_query)
+            else
+                self:_openSearchInput()
+            end
         end,
     }
-    local lang_btn = Button:new{
-        text = T("Lang"), width = filter_btn_w, bordersize = Size.border.thin,
-        -- Pass nil, not self: passing a SearchDialog (InputContainer) as Menu parent
-        -- causes KOReader to call show_parent:onShow() on close, corrupting the widget stack.
-        callback = function() Ui().showLanguageSelectionDialog(nil) end,
-    }
-    local fmt_btn = Button:new{
-        text = T("Fmt"), width = filter_btn_w, bordersize = Size.border.thin,
-        callback = function() Ui().showExtensionSelectionDialog(nil) end,
-    }
-    local sort_btn = Button:new{
-        text = T("Sort"), width = filter_btn_w, bordersize = Size.border.thin,
-        callback = function() Ui().showOrdersSelectionDialog(nil) end,
+
+    local filter_btn = Button:new{
+        text      = T("\u{2261}"),
+        width     = filter_btn_w,
+        bordersize = Size.border.thin,
+        callback  = function() self:_showFiltersMenu() end,
     }
 
     local search_row = HorizontalGroup:new{
         dimen = Geom:new{ w = fiw }, align = "center",
-        search_btn, lang_btn, fmt_btn, sort_btn,
+        self._search_display_btn, go_btn, filter_btn,
     }
     local sr_h = search_row:getSize().h
-
-    -- ── Recent searches ───────────────────────────────────────────────────
-    local recent_row, rec_h = nil, 0
-    local recents = Config.getRecentSearches()
-    if #recents > 0 then
-        local chips = HorizontalGroup:new{ align = "center" }
-        for i = 1, math.min(#recents, 6) do
-            local q = recents[i]
-            local chip = Button:new{
-                text      = q,
-                margin    = Size.padding.tiny,
-                bordersize = Size.border.thin,
-                callback  = function()
-                    if type(self.on_perform_search_callback) == "function" then
-                        self.on_perform_search_callback(q)
-                    else
-                        self.on_search_callback(q)
-                    end
-                end,
-            }
-            table.insert(chips, chip)
-        end
-        recent_row = chips
-        rec_h = recent_row:getSize().h
-    end
 
     -- ── Toggle + Refresh ──────────────────────────────────────────────────
     local icon_sz = Size.item.height_default + 2*Size.padding.default + 2*Size.border.thin
@@ -369,7 +387,7 @@ function SearchDialog:init()
     local tg_h = toggle_grp:getSize().h
 
     -- ── Content area ──────────────────────────────────────────────────────
-    local content_h = fih - tb_h - sr_h - rec_h - tg_h
+    local content_h = fih - tb_h - sr_h - tg_h
     content_h = math.max(content_h, Screen:scaleBySize(80))
     self._content_height = content_h
 
@@ -405,19 +423,14 @@ function SearchDialog:init()
         content_widget,
     }
 
-    -- Build inner layout with optional recent_row
-    local inner_children = {
+    -- Build inner layout
+    local inner_vgroup = VerticalGroup:new{
         align = "left",
         titlebar,
         search_row,
+        toggle_grp,
+        self.container_parent,
     }
-    if recent_row then
-        table.insert(inner_children, recent_row)
-    end
-    table.insert(inner_children, toggle_grp)
-    table.insert(inner_children, self.container_parent)
-
-    local inner_vgroup = VerticalGroup:new(inner_children)
 
     self[1] = FrameContainer:new{
         width = self.width, height = self.height,
@@ -628,6 +641,71 @@ end
 function SearchDialog:setPaginationState(has_more, current_page)
     self.has_more_api_results = has_more
     self.current_page_loaded  = current_page
+end
+
+-- ── Search helpers ────────────────────────────────────────────────────────────
+
+function SearchDialog:_openSearchInput()
+    local dialog
+    dialog = InputDialog:new{
+        title  = T("Search Z-Library"),
+        input  = self._last_query or "",
+        buttons = {{
+            {
+                text = T("Cancel"),
+                id   = "close",
+                callback = function() UIManager:close(dialog) end,
+            },
+            {
+                text             = T("Search"),
+                is_enter_default = true,
+                callback         = function()
+                    local q = util.trim(dialog:getInputText() or "")
+                    UIManager:close(dialog)
+                    if q ~= "" then
+                        self._last_query = q
+                        self._search_display_btn:setText(q)
+                        self:_doSearch(q)
+                    end
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function SearchDialog:_doSearch(query)
+    if type(self.on_perform_search_callback) == "function" then
+        self.on_perform_search_callback(query)
+    else
+        self.on_search_callback(query)
+    end
+end
+
+function SearchDialog:_showFiltersMenu()
+    local filter_dialog
+    filter_dialog = ButtonDialog:new{
+        title = T("Filters"),
+        buttons = {
+            {{ text = T("Language"), callback = function()
+                UIManager:close(filter_dialog)
+                Ui().showLanguageSelectionDialog(nil)
+            end }},
+            {{ text = T("Format"), callback = function()
+                UIManager:close(filter_dialog)
+                Ui().showExtensionSelectionDialog(nil)
+            end }},
+            {{ text = T("Sort by"), callback = function()
+                UIManager:close(filter_dialog)
+                Ui().showOrdersSelectionDialog(nil)
+            end }},
+            {{ text = T("Cancel"), callback = function()
+                UIManager:close(filter_dialog)
+            end }},
+        },
+    }
+    UIManager:show(filter_dialog)
 end
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────

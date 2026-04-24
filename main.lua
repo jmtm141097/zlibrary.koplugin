@@ -107,93 +107,21 @@ function Zlibrary:addToMainMenu(menu_items)
             text = T("Z-library"),
             sub_item_table = {
                 {
+                    text = T("Launch"),
+                    callback = function()
+                        self:showMultiSearchDialog(1)
+                    end,
+                },
+                {
                     text = T("Settings"),
                     keep_menu_open = true,
-                    separator = true,
                     sub_item_table = {
-                        {
-                            text = T("Set base URL"),
-                            keep_menu_open = true,
-                            callback = function()
-                                Ui.showGenericInputDialog(
-                                    T("Set base URL"),
-                                    Config.SETTINGS_BASE_URL_KEY,
-                                    Config.getBaseUrl(true),
-                                    false,
-                                    function(input_value)
-                                        local success, err_msg = Config.setAndValidateBaseUrl(input_value)
-                                        if not success then
-                                            Ui.showErrorMessage(err_msg or T("Invalid Base URL."))
-                                            return false
-                                        end
-                                        return true
-                                    end
-                                )
-                            end,
-                        },
-                        {
-                            text = T("Auto-discover base URL"),
-                            keep_menu_open = true,
-                            callback = function()
-                                local loading_msg = Ui.showLoadingMessage(T("Searching for working Z-library server..."))
-                                
-                                local task = function()
-                                    return self:autoDiscoverAndSetBaseUrl()
-                                end
-                                
-                                local on_success = function(result)
-                                    Ui.closeMessage(loading_msg)
-                                    if result.success then
-                                        Ui.showInfoMessage(T("Successfully found and set base URL to: ") .. result.url)
-                                    else
-                                        Ui.showErrorMessage(result.error or T("Failed to find a working base URL."))
-                                    end
-                                end
-                                
-                                local on_error = function(err_msg)
-                                    Ui.closeMessage(loading_msg)
-                                    Ui.showErrorMessage(T("Error during auto-discovery: ") .. tostring(err_msg))
-                                end
-                                
-                                AsyncHelper.run(task, on_success, on_error)
-                            end,
-                            separator = true,
-                        },
-                        {
-                            text = T("Set email"),
-                            keep_menu_open = true,
-                            callback = function()
-                                Ui.showGenericInputDialog(
-                                    T("Set email"),
-                                    Config.SETTINGS_USERNAME_KEY,
-                                    Config.getSetting(Config.SETTINGS_USERNAME_KEY),
-                                    false
-                                )
-                            end,
-                        },
-                        {
-                            text = T("Set password"),
-                            keep_menu_open = true,
-                            callback = function()
-                                Ui.showGenericInputDialog(
-                                    T("Set password"),
-                                    Config.SETTINGS_PASSWORD_KEY,
-                                    Config.getSetting(Config.SETTINGS_PASSWORD_KEY),
-                                    true
-                                )
-                            end,
-                        },
                         {
                             text = T("Verify credentials"),
                             keep_menu_open = true,
                             callback = function()
-                                self:login(function(success)
-                                    if success then
-                                        Ui.showInfoMessage(T("Login successful!"))
-                                    end
-                                end)
+                                Ui.showCredentialsDialog(self)
                             end,
-                            separator = true,
                         },
                         {
                             text = T("Set download directory"),
@@ -203,41 +131,8 @@ function Zlibrary:addToMainMenu(menu_items)
                             end,
                         },
                         {
-                            text = T("Search options"),
-                            keep_menu_open = true,
-                            separator = true,
-                            sub_item_table = {{
-                                text = T("Select search languages"),
-                                keep_menu_open = true,
-                                callback = function()
-                                    Ui.showLanguageSelectionDialog(self.ui)
-                                end
-                            }, {
-                                text = T("Select search formats"),
-                                keep_menu_open = true,
-                                callback = function()
-                                    Ui.showExtensionSelectionDialog(self.ui)
-                                end
-                            }, {
-                                text = T("Select search order"),
-                                keep_menu_open = true,
-                                callback = function()
-                                    Ui.showOrdersSelectionDialog(self.ui)
-                                end
-                            }}
-                        },
-                        {
-                            text = T("Timeout settings"),
-                            keep_menu_open = true,
-                            separator = true,
-                            callback = function()
-                                Ui.showAllTimeoutConfigDialog(self.ui)
-                            end,
-                        },
-                        {
                             text = T("Check for updates"),
                             keep_menu_open = false,
-                            separator = true,
                             callback = function()
                                 if self.plugin_path then
                                     Ota.startUpdateProcess(self.plugin_path)
@@ -250,7 +145,6 @@ function Zlibrary:addToMainMenu(menu_items)
                         {
                             text = T("Developer options"),
                             keep_menu_open = true,
-                            separator = true,
                             sub_item_table_func = function()
                                 return {
                                     {
@@ -260,14 +154,16 @@ function Zlibrary:addToMainMenu(menu_items)
                                             Config.clearUserSession()
                                             Ui.showInfoMessage(T("Session cleared. You will need to login again."))
                                         end,
-                                    }, {
+                                    },
+                                    {
                                         text = T("Clear runtime cache"),
                                         keep_menu_open = true,
                                         callback = function()
                                             self._runtime_cache:clear()
                                             Ui.showInfoMessage(T("Runtime cache cleared."))
                                         end,
-                                    }, {
+                                    },
+                                    {
                                         text = T("Test mode"),
                                         keep_menu_open = true,
                                         checked_func = function()
@@ -285,37 +181,18 @@ function Zlibrary:addToMainMenu(menu_items)
                                         end,
                                     },
                                 }
-                            end
+                            end,
                         },
-                    }
+                        {
+                            text = T("Timeout settings"),
+                            keep_menu_open = true,
+                            callback = function()
+                                Ui.showAllTimeoutConfigDialog(self.ui)
+                            end,
+                        },
+                    },
                 },
-                {
-                    text = T("Search"),
-                    callback = function()
-                        Ui.showSearchDialog(self)
-                    end,
-                },
-                {
-                    text = T("Recommended"),
-                    callback = function()
-                        local search_tab_recommended = 1
-                        self:showMultiSearchDialog(search_tab_recommended)
-                    end,
-                },
-                {
-                    text = T("Most popular"),
-                    callback = function()
-                        local search_tab_most_popular = 2
-                        self:showMultiSearchDialog(search_tab_most_popular)
-                    end,
-                },{
-                    text = T("My books"),
-                    callback = function()
-                        local mybooks_tab_downloaded = 1
-                        self:showMyBooksDialog(mybooks_tab_downloaded)
-                    end,
-                },
-            }
+            },
         }
     end
 end
