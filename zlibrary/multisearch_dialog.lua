@@ -56,39 +56,30 @@ local CoverGrid = InputContainer:extend{
 }
 
 function CoverGrid:init()
-    local nav_h = Screen:scaleBySize(40)
-    local grid_h = self.height
-    
-    -- If we might need pagination, reserve space for the nav bar
-    -- For now, always reserve it to keep grid size consistent
-    grid_h = self.height - nav_h
+    local nav_h = Screen:scaleBySize(55)
+    local safety_margin = Size.padding.default * 3
+    local grid_h = self.height - nav_h - safety_margin
 
     if self.cols == 1 then
         self._cell_w = self.width
-        self._cell_h = self.rows and math.floor(grid_h / self.rows) 
-                       or math.max(Screen:scaleBySize(120), math.floor(Screen:getHeight() / 6))
+        -- Ensure exactly 5 rows fit perfectly with room to spare
+        self._cell_h = math.floor(grid_h / 5)
     else
         self._cell_w = math.floor(self.width / self.cols)
         if self.rows then
             self._cell_h = math.floor(grid_h / self.rows)
         else
-            -- 3:4 width:height gives more visible rows than strict 2:3 book-cover ratio
             self._cell_h = math.floor(self._cell_w * 4 / 3)
         end
     end
     
-    if self.rows then
-        self._visible_rows = self.rows
-    else
-        self._visible_rows = math.floor(grid_h / self._cell_h)
-    end
+    self._visible_rows = math.floor(grid_h / self._cell_h)
     
     if self._visible_rows < 1 then self._visible_rows = 1 end
     self._first_visible_row = 0
     self.books = self.books or {}
     self.dimen = Geom:new{ w = self.width, h = self.height }
 
-    -- Persistent container: never replaced, only its children are cleared/re-added.
     self._vg = VerticalGroup:new{ align = "left" }
     self[1] = self._vg
     self:_build()
@@ -130,9 +121,14 @@ function CoverGrid:_build()
         table.insert(grid_vg, row)
     end
     table.insert(self._vg, grid_vg)
+    
+    -- Ensure some spacing before the nav bar
+    table.insert(self._vg, WidgetContainer:new{
+        dimen = Geom:new{ w = self.width, h = Size.padding.default }
+    })
 
     -- Pagination buttons
-    local nav_h    = Screen:scaleBySize(40)
+    local nav_h    = Screen:scaleBySize(55)
     local btn_w    = math.floor(self.width * 0.25)
     local label_w  = self.width - 2 * btn_w
     
@@ -188,44 +184,39 @@ end
 
 function CoverGrid:_visualCell(book)
     local padding   = Size.padding.small
-    local inner_w   = self._cell_w - 2 * padding
-    local inner_h   = self._cell_h - 2 * padding
+    local border    = Size.border.thin
+    -- Account for the outer FrameContainer borders and padding
+    local inner_w   = self._cell_w - 2 * padding - 2 * border
+    local inner_h   = self._cell_h - 2 * padding - 2 * border
 
     local cover_path = book.hash and Cache.getCoverPath(book.hash)
     local has_cover = cover_path and util.fileExists(cover_path)
 
     if self.cols == 1 then
         -- List layout
-        local cover_w = math.floor(inner_h * 0.75) -- 3:4 ratio for cover
-        local cover_h = inner_h
-        local text_w  = inner_w - cover_w - padding * 2
-
-        local cover_widget
-        if has_cover then
-            local ok, img = pcall(ImageWidget.new, ImageWidget, {
-                file = cover_path, width = cover_w, height = cover_h, scale_factor = 0,
-            })
-            if ok then cover_widget = img end
-        end
-
-        if not cover_widget then
-            local initial = (book.title and book.title ~= "") and book.title:sub(1,1):upper() or "?"
-            cover_widget = CenterContainer:new{
-                dimen = Geom:new{ w = cover_w, h = cover_h },
-                TextWidget:new{
-                    text = initial,
-                    face = Font:getFace("cfont", math.max(14, math.floor(cover_h * 0.25))),
-                }
-            }
-        end
+        -- The cover_frame also has borders, so we subtract them from cover_h
+        local cover_h = inner_h - 2 * border
+        local cover_w = math.floor(cover_h * 0.75) -- 3:4 ratio
+        local text_w  = inner_w - cover_w - 2 * border - padding * 2
 
         local cover_frame = FrameContainer:new{
             width       = cover_w,
             height      = cover_h,
-            bordersize  = Size.border.thin,
+            padding     = 0,
+            bordersize  = border,
             bordercolor = Blitbuffer.COLOR_LIGHT_GRAY,
             background  = Blitbuffer.COLOR_WHITE,
-            cover_widget,
+            has_cover and ImageWidget:new{
+                file = cover_path,
+                width = cover_w,
+                height = cover_h,
+            } or CenterContainer:new{
+                dimen = Geom:new{ w = cover_w, h = cover_h },
+                TextWidget:new{
+                    text = (book.title and book.title ~= "") and book.title:sub(1,1):upper() or "?",
+                    face = Font:getFace("cfont", math.max(14, math.floor(cover_h * 0.25))),
+                }
+            }
         }
 
         local title_text = TextWidget:new{
@@ -241,12 +232,20 @@ function CoverGrid:_visualCell(book)
             max_width = text_w,
             align = "left",
         }
-        local details_str = string.format("%s - %s - %s - \u{2605} %s",
+        -- Add year to metadata
+        local details_str = string.format("%s - %s - %s - %s - \u{2605} %s",
+            book.year or "N/A",
             book.lang or "N/A",
             book.format or "N/A",
             book.size or "N/A",
             book.rating or "N/A"
         )
+        if self.mandatory_func then
+            local man_text = self.mandatory_func(book)
+            if man_text then
+                details_str = details_str .. " | " .. tostring(man_text)
+            end
+        end
         local details_text = TextWidget:new{
             text = details_str,
             face = Font:getFace("cfont", 14),
@@ -273,7 +272,7 @@ function CoverGrid:_visualCell(book)
             width       = self._cell_w,
             height      = self._cell_h,
             padding     = padding,
-            bordersize  = Size.border.thin,
+            bordersize  = border,
             bordercolor = Blitbuffer.COLOR_LIGHT_GRAY,
             background  = Blitbuffer.COLOR_WHITE,
             content_row,
@@ -282,10 +281,9 @@ function CoverGrid:_visualCell(book)
         -- Grid layout
         local inner
         if has_cover then
-            local ok, img = pcall(ImageWidget.new, ImageWidget, {
-                file = cover_path, width = inner_w, height = inner_h, scale_factor = 0,
-            })
-            if ok then inner = img end
+            inner = ImageWidget:new{
+                file = cover_path, width = inner_w, height = inner_h,
+            }
         end
 
         if not inner then
@@ -512,12 +510,14 @@ function SearchDialog:init()
 
     local content_widget
     if self.cover_grid_mode then
+        local active_item = self:getActiveItem()
         self._cover_grid = CoverGrid:new{
             width  = fiw,
             height = content_h,
             books  = self.books,
             cols   = self.cover_grid_cols or COVER_COLS,
             rows   = self.cover_grid_rows,
+            mandatory_func = active_item and active_item.mandatory_func,
             on_select_book = function(book) self.on_select_book_callback(book) end,
             on_hold_book   = function(book) self:_showContextMenu(book) end,
             has_more_callback = function()

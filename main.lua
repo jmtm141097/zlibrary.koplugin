@@ -520,6 +520,9 @@ function Zlibrary:showMyBooksDialog(def_position, def_search_input)
             title = T("Z-library My Books"),
             def_position = def_position,
             def_search_input = def_search_input,
+            cover_grid_mode = true,
+            cover_grid_cols = 1,
+            cover_grid_rows = 5,
             on_select_book_callback = function(book)
                 self:onSelectRecommendedBook(book)
             end,
