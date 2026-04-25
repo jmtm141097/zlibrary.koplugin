@@ -60,12 +60,15 @@ function CoverGrid:init()
     local safety_margin = Size.padding.default * 3
     local grid_h = self.height - nav_h - safety_margin
 
+    local spacer_w = (self.cols > 1) and Size.padding.large or 0
+    local total_spacers_w = spacer_w * (self.cols - 1)
+
     if self.cols == 1 then
         self._cell_w = self.width
         -- Ensure exactly 5 rows fit perfectly with room to spare
         self._cell_h = math.floor(grid_h / 5)
     else
-        self._cell_w = math.floor(self.width / self.cols)
+        self._cell_w = math.floor((self.width - total_spacers_w) / self.cols)
         if self.rows then
             self._cell_h = math.floor(grid_h / self.rows)
         else
@@ -103,11 +106,18 @@ function CoverGrid:_build()
         table.remove(self._vg)
     end
 
+    local spacer_w = (self.cols > 1) and Size.padding.large or 0
+
     local grid_vg = VerticalGroup:new{ align = "left" }
     for r = 0, self._visible_rows - 1 do
         local actual_row = self._first_visible_row + r
         local row = HorizontalGroup:new{ align = "top" }
         for c = 0, self.cols - 1 do
+            if c > 0 then
+                table.insert(row, WidgetContainer:new{
+                    dimen = Geom:new{ w = spacer_w, h = self._cell_h },
+                })
+            end
             local idx  = actual_row * self.cols + c + 1
             local book = self.books[idx]
             if book then
@@ -183,7 +193,7 @@ function CoverGrid:_build()
 end
 
 function CoverGrid:_visualCell(book)
-    local padding   = Size.padding.small
+    local padding   = (self.cols == 1) and Size.padding.default or Size.padding.small
     local border    = Size.border.thin
     -- Account for the outer FrameContainer borders and padding
     local inner_w   = self._cell_w - 2 * padding - 2 * border
@@ -197,7 +207,8 @@ function CoverGrid:_visualCell(book)
         -- The cover_frame also has borders, so we subtract them from cover_h
         local cover_h = inner_h - 2 * border
         local cover_w = math.floor(cover_h * 0.75) -- 3:4 ratio
-        local text_w  = inner_w - cover_w - 2 * border - padding * 2
+        local spacer_w = Screen:scaleBySize(20)
+        local text_w  = inner_w - cover_w - 2 * border - spacer_w - padding
 
         local cover_frame = FrameContainer:new{
             width       = cover_w,
@@ -264,7 +275,7 @@ function CoverGrid:_visualCell(book)
         local content_row = HorizontalGroup:new{
             align = "center",
             cover_frame,
-            WidgetContainer:new{ dimen = Geom:new{ w = padding, h = inner_h } }, -- spacing
+            WidgetContainer:new{ dimen = Geom:new{ w = spacer_w, h = inner_h } }, -- spacing
             text_group,
         }
 
