@@ -345,6 +345,8 @@ function Zlibrary:showMultiSearchDialog(def_position, def_search_input)
         def_position = def_position,
         def_search_input = def_search_input,
         cover_grid_mode = true,
+        cover_grid_cols = 3,
+        cover_grid_rows = 3,
         on_select_book_callback = function(book)
             self:onSelectRecommendedBook(book)
         end,
@@ -947,111 +949,94 @@ function Zlibrary:displaySearchResults(initial_book_data_list, query_string)
         return
     end
 
-    local menu_items = {}
-    logger.info(string.format("Zlibrary:displaySearchResults - Preparing menu items from %d initial results.", #initial_book_data_list))
-
-    for i = 1, #initial_book_data_list do
-        local book_menu_item_data = initial_book_data_list[i]
-        menu_items[i] = Ui.createColumnSearchItem(book_menu_item_data, self)
-    end
-
     if self.active_results_menu then
         UIManager:close(self.active_results_menu)
         self.active_results_menu = nil
     end
 
-    local function on_goto_page_handler(menu_instance, new_page_number)
-        menu_instance.prev_focused_path = nil
-        menu_instance.page = new_page_number
-
-        local is_last_page_of_current_items = (new_page_number == menu_instance.page_num)
-
-        if is_last_page_of_current_items and self.has_more_api_results then
-            logger.info(string.format("Zlibrary: Reached page %d (last page of current items). Attempting to load more from API.", new_page_number))
-
-            local next_api_page_to_fetch = self.current_search_api_page_loaded + 1
-            local loading_msg_more = Ui.showLoadingMessage(string.format(T("Loading more results (Page %s)..."), next_api_page_to_fetch))
-
-            local user_session_more = Config.getUserSession()
-            local selected_languages_more = Config.getSearchLanguages()
-            local selected_extensions_more = Config.getSearchExtensions()
-            local selected_order_more = Config.getSearchOrder()
-
-            local task_load_more = function()
-                local api_result_more = Api.search(self.current_search_query, user_session_more.user_id, user_session_more.user_key, selected_languages_more, selected_extensions_more, selected_order_more, next_api_page_to_fetch)
-                -- Pre-descargar portadas de la nueva página
-                if api_result_more and api_result_more.results and #api_result_more.results > 0 then
-                    local timed_out = Ui.prefetchCoversSync(api_result_more.results, 50)
-                    if timed_out then api_result_more._covers_timed_out = true end
-                end
-                return api_result_more
+    local MultiSearchDialog = require("zlibrary.multisearch_dialog")
+    self.active_results_menu = MultiSearchDialog:new{
+        title = T("Search Results") .. ": " .. query_string,
+        def_search_input = query_string,
+        cover_grid_mode = true,
+        no_search_bar = true,
+        cover_grid_cols = 1,
+        cover_grid_rows = 5,
+        books = initial_book_data_list,
+        current_page_loaded = self.current_search_api_page_loaded,
+        has_more_api_results = self.has_more_api_results,
+        on_select_book_callback = function(book)
+            if book.needs_detail_fetch then
+                self:onSelectSearchBook(book)
+            else
+                Ui.showBookDetails(self, book)
             end
+        end,
+        on_search_callback = function(def_input)
+            Ui.showSearchDialog(self, def_input)
+        end,
+        on_perform_search_callback = function(query)
+            Config.addRecentSearch(query)
+            self:performSearch(query)
+        end,
+        on_similar_books_callback = function(book)
+            self:searchSimilarBooks(book)
+        end,
+        toggle_items = {{
+            text = T("Search Results"),
+            enable_pagination = true,
+            callback = function(widget, page, is_refresh)
+                if page > 1 and self.has_more_api_results then
+                    local next_api_page_to_fetch = page
+                    local loading_msg_more = Ui.showLoadingMessage(string.format(T("Loading more results (Page %s)..."), next_api_page_to_fetch))
+                    local user_session_more = Config.getUserSession()
+                    local selected_languages_more = Config.getSearchLanguages()
+                    local selected_extensions_more = Config.getSearchExtensions()
+                    local selected_order_more = Config.getSearchOrder()
 
-            local on_success_load_more
-            local on_error_load_more
-
-            on_success_load_more = function(api_result_more)
-                Ui.closeMessage(loading_msg_more)
-                if api_result_more.error then
-                    if Api.isAuthenticationError(api_result_more.error) then
-                        self:login(function(login_ok)
-                            if login_ok then
-                                on_goto_page_handler(menu_instance, new_page_number)
-                            end
-                        end)
-                        return
-                    end
-                    Ui.showErrorMessage(Ui.colonConcat(T("Failed to load more results"), tostring(api_result_more.error)))
-                    return
-                end
-
-                local new_book_objects = api_result_more.results
-                if new_book_objects and #new_book_objects > 0 then
-                    logger.info(string.format("Zlibrary: Adding %d new book objects from API.", #new_book_objects))
-                    self.current_search_api_page_loaded = next_api_page_to_fetch
-
-                    local new_menu_items_to_add = {}
-                    for _, book_api_data_transformed in ipairs(new_book_objects) do
-                        table.insert(self.all_search_results_data, book_api_data_transformed)
-                        table.insert(new_menu_items_to_add, Ui.createColumnSearchItem(book_api_data_transformed, self))
-                    end
-                    Ui.appendSearchResultsToMenu(menu_instance, new_menu_items_to_add)
-                    if api_result_more._covers_timed_out then
-                        Ui.showInfoMessage(T("Covers not available"))
-                    end
-                else
-                    logger.info("Zlibrary: No more results from API or API returned empty.")
-                    self.has_more_api_results = false
-                    Ui.showInfoMessage(T("No more results found."))
-                    menu_instance:updateItems(1, true)
-                end
-            end
-
-            on_error_load_more = function(err_msg_more)
-                Ui.closeMessage(loading_msg_more)
-                if Api.isAuthenticationError(err_msg_more) then
-                    self:login(function(login_ok)
-                        if login_ok then
-                            on_goto_page_handler(menu_instance, new_page_number)
+                    local task_load_more = function()
+                        local api_result_more = Api.search(self.current_search_query, user_session_more.user_id, user_session_more.user_key, selected_languages_more, selected_extensions_more, selected_order_more, next_api_page_to_fetch)
+                        if api_result_more and api_result_more.results and #api_result_more.results > 0 then
+                            local timed_out = Ui.prefetchCoversSync(api_result_more.results, 50)
+                            if timed_out then api_result_more._covers_timed_out = true end
                         end
-                    end)
-                    return
+                        return api_result_more
+                    end
+
+                    local on_success_load_more = function(api_result_more)
+                        Ui.closeMessage(loading_msg_more)
+                        if api_result_more.error then
+                            Ui.showErrorMessage(Ui.colonConcat(T("Failed to load more results"), tostring(api_result_more.error)))
+                            return
+                        end
+                        if not api_result_more.results or #api_result_more.results == 0 then
+                            self.has_more_api_results = false
+                            widget:setPaginationState(false, self.current_search_api_page_loaded)
+                            widget:replaceBatchDataAndReload({})
+                            return
+                        end
+
+                        self.has_more_api_results = api_result_more.has_more_results
+                        self.current_search_api_page_loaded = next_api_page_to_fetch
+                        widget:setPaginationState(self.has_more_api_results, self.current_search_api_page_loaded)
+                        widget:replaceBatchDataAndReload(api_result_more.results)
+                        
+                        if api_result_more._covers_timed_out then
+                            UIManager:nextTick(function() Ui.showInfoMessage(T("Covers not available")) end)
+                        end
+                    end
+                    
+                    local on_error_load_more = function(err_msg)
+                        Ui.closeMessage(loading_msg_more)
+                        Ui.showErrorMessage(Ui.colonConcat(T("Failed to load more results"), err_msg))
+                    end
+
+                    AsyncHelper.run(task_load_more, on_success_load_more, on_error_load_more, loading_msg_more)
                 end
-                
-                Ui.showErrorMessage(Ui.colonConcat(T("Failed to load more results"), tostring(err_msg_more)))
             end
-
-            AsyncHelper.run(task_load_more, on_success_load_more, on_error_load_more, loading_msg_more)
-        else
-            if is_last_page_of_current_items and not self.has_more_api_results then
-                logger.info("Zlibrary: Reached last page, and no more API results to load.")
-            end
-            menu_instance:updateItems(1, true)
-        end
-        return true
-    end
-
-    self.active_results_menu = Ui.createSearchResultsMenu(self.ui, query_string, menu_items, on_goto_page_handler)
+        }}
+    }
+    self.active_results_menu:fetchAndShow()
 end
 
 function Zlibrary:downloadBook(book)

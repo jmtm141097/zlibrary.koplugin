@@ -35,7 +35,7 @@ local function Ui()
     return _Ui
 end
 
-local COVER_COLS = 3
+local COVER_COLS = 1
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- CoverGrid: single InputContainer that renders a paged grid of book covers
@@ -46,6 +46,7 @@ local CoverGrid = InputContainer:extend{
     height = 0,
     books  = nil,
     cols   = COVER_COLS,
+    rows   = nil, -- optional: force number of rows
     on_select_book = nil,
     on_hold_book   = nil,
     _cell_w  = 0,
@@ -55,18 +56,39 @@ local CoverGrid = InputContainer:extend{
 }
 
 function CoverGrid:init()
-    self._cell_w = math.floor(self.width / self.cols)
-    -- 3:4 width:height gives more visible rows than strict 2:3 book-cover ratio
-    self._cell_h = math.floor(self._cell_w * 4 / 3)
-    self._visible_rows = math.floor(self.height / self._cell_h)
+    local nav_h = Screen:scaleBySize(40)
+    local grid_h = self.height
+    
+    -- If we might need pagination, reserve space for the nav bar
+    -- For now, always reserve it to keep grid size consistent
+    grid_h = self.height - nav_h
+
+    if self.cols == 1 then
+        self._cell_w = self.width
+        self._cell_h = self.rows and math.floor(grid_h / self.rows) 
+                       or math.max(Screen:scaleBySize(120), math.floor(Screen:getHeight() / 6))
+    else
+        self._cell_w = math.floor(self.width / self.cols)
+        if self.rows then
+            self._cell_h = math.floor(grid_h / self.rows)
+        else
+            -- 3:4 width:height gives more visible rows than strict 2:3 book-cover ratio
+            self._cell_h = math.floor(self._cell_w * 4 / 3)
+        end
+    end
+    
+    if self.rows then
+        self._visible_rows = self.rows
+    else
+        self._visible_rows = math.floor(grid_h / self._cell_h)
+    end
+    
     if self._visible_rows < 1 then self._visible_rows = 1 end
     self._first_visible_row = 0
     self.books = self.books or {}
     self.dimen = Geom:new{ w = self.width, h = self.height }
 
     -- Persistent container: never replaced, only its children are cleared/re-added.
-    -- Replacing self[1] on a live widget can cause KOReader to crash because the
-    -- C rendering layer may still hold a reference to the old VerticalGroup.
     self._vg = VerticalGroup:new{ align = "left" }
     self[1] = self._vg
     self:_build()
@@ -85,13 +107,12 @@ function CoverGrid:_build()
     local max_first  = math.max(0, total_rows - self._visible_rows)
     self._first_visible_row = math.min(self._first_visible_row, max_first)
 
-    -- Clear children using table.remove so LuaJIT's # operator stays at 0 after clearing.
-    -- Setting self._vg[i] = nil leaves holes: # may still return the old length, causing
-    -- table.insert to place new rows at wrong indices (4, 5... when 1-3 are nil) → crash.
+    -- Clear children
     while #self._vg > 0 do
         table.remove(self._vg)
     end
 
+    local grid_vg = VerticalGroup:new{ align = "left" }
     for r = 0, self._visible_rows - 1 do
         local actual_row = self._first_visible_row + r
         local row = HorizontalGroup:new{ align = "top" }
@@ -101,105 +122,193 @@ function CoverGrid:_build()
             if book then
                 table.insert(row, self:_visualCell(book))
             else
-                -- WidgetContainer is the only safe placeholder: getSize() returns self.dimen
-                -- directly (no child needed), and paintTo() guards with "if self[1]".
-                -- FrameContainer crashes in getSize() without a child; CenterContainer
-                -- crashes in paintTo() without a child (no nil guard in this KOReader version).
                 table.insert(row, WidgetContainer:new{
                     dimen = Geom:new{ w = self._cell_w, h = self._cell_h },
                 })
             end
         end
-        table.insert(self._vg, row)
+        table.insert(grid_vg, row)
     end
+    table.insert(self._vg, grid_vg)
 
-    -- Pagination buttons when content overflows visible area
-    if total_rows > self._visible_rows then
-        local cur_page = self._first_visible_row + 1
-        local max_page = math.max(1, total_rows - self._visible_rows + 1)
-        local nav_h    = Screen:scaleBySize(36)
-        local btn_w    = math.floor(self.width * 0.25)
-        local label_w  = self.width - 2 * btn_w
+    -- Pagination buttons
+    local nav_h    = Screen:scaleBySize(40)
+    local btn_w    = math.floor(self.width * 0.25)
+    local label_w  = self.width - 2 * btn_w
+    
+    local cur_page = math.floor(self._first_visible_row / self._visible_rows) + 1
+    local total_pages = math.ceil(total_rows / self._visible_rows)
+    if total_pages < 1 then total_pages = 1 end
 
-        local prev_btn = Button:new{
-            text      = "\u{25C4}",
-            width     = btn_w,
-            bordersize = Size.border.thin,
-            enabled   = self._first_visible_row > 0,
-            callback  = function()
-                self._first_visible_row = math.max(0, self._first_visible_row - self._visible_rows)
+    local prev_btn = Button:new{
+        text      = "\u{25C4}",
+        width     = btn_w,
+        bordersize = Size.border.thin,
+        enabled   = self._first_visible_row > 0,
+        callback  = function()
+            self._first_visible_row = math.max(0, self._first_visible_row - self._visible_rows)
+            self:_build()
+            UIManager:setDirty("all", "ui")
+        end,
+    }
+
+    local next_btn = Button:new{
+        text      = "\u{25BA}",
+        width     = btn_w,
+        bordersize = Size.border.thin,
+        enabled   = (self._first_visible_row + self._visible_rows < total_rows) or self.has_more_callback,
+        callback  = function()
+            if self._first_visible_row + self._visible_rows < total_rows then
+                self._first_visible_row = self._first_visible_row + self._visible_rows
                 self:_build()
                 UIManager:setDirty("all", "ui")
-            end,
-        }
+            elseif self.has_more_callback then
+                self.has_more_callback()
+            end
+        end,
+    }
 
-        local next_btn = Button:new{
-            text      = "\u{25BA}",
-            width     = btn_w,
-            bordersize = Size.border.thin,
-            enabled   = self._first_visible_row < max_first,
-            callback  = function()
-                self._first_visible_row = math.min(
-                    self._first_visible_row + self._visible_rows, max_first)
-                self:_build()
-                UIManager:setDirty("all", "ui")
-            end,
-        }
-
-        local nav_row = CenterContainer:new{
-            dimen = Geom:new{ w = self.width, h = nav_h },
-            HorizontalGroup:new{
-                align = "center",
-                prev_btn,
-                CenterContainer:new{
-                    dimen = Geom:new{ w = label_w, h = nav_h },
-                    TextWidget:new{
-                        text = string.format("%d / %d", cur_page, max_page),
-                        face = Font:getFace("cfont", 14),
-                    },
+    local nav_row = CenterContainer:new{
+        dimen = Geom:new{ w = self.width, h = nav_h },
+        HorizontalGroup:new{
+            align = "center",
+            prev_btn,
+            CenterContainer:new{
+                dimen = Geom:new{ w = label_w, h = nav_h },
+                TextWidget:new{
+                    text = string.format("%d / %d", cur_page, total_pages),
+                    face = Font:getFace("cfont", 14),
                 },
-                next_btn,
             },
-        }
-        table.insert(self._vg, nav_row)
-    end
+            next_btn,
+        },
+    }
+    table.insert(self._vg, nav_row)
 end
 
 function CoverGrid:_visualCell(book)
     local padding   = Size.padding.small
     local inner_w   = self._cell_w - 2 * padding
     local inner_h   = self._cell_h - 2 * padding
+
     local cover_path = book.hash and Cache.getCoverPath(book.hash)
     local has_cover = cover_path and util.fileExists(cover_path)
 
-    local inner
-    if has_cover then
-        local ok, img = pcall(ImageWidget.new, ImageWidget, {
-            file = cover_path, width = inner_w, height = inner_h, scale_factor = 0,
-        })
-        if ok then inner = img end
-    end
+    if self.cols == 1 then
+        -- List layout
+        local cover_w = math.floor(inner_h * 0.75) -- 3:4 ratio for cover
+        local cover_h = inner_h
+        local text_w  = inner_w - cover_w - padding * 2
 
-    if not inner then
-        local initial = (book.title and book.title ~= "") and book.title:sub(1,1):upper() or "?"
-        inner = CenterContainer:new{
-            dimen = Geom:new{ w = inner_w, h = inner_h },
-            TextWidget:new{
-                text = initial,
-                face = Font:getFace("cfont", math.max(14, math.floor(inner_h * 0.25))),
+        local cover_widget
+        if has_cover then
+            local ok, img = pcall(ImageWidget.new, ImageWidget, {
+                file = cover_path, width = cover_w, height = cover_h, scale_factor = 0,
+            })
+            if ok then cover_widget = img end
+        end
+
+        if not cover_widget then
+            local initial = (book.title and book.title ~= "") and book.title:sub(1,1):upper() or "?"
+            cover_widget = CenterContainer:new{
+                dimen = Geom:new{ w = cover_w, h = cover_h },
+                TextWidget:new{
+                    text = initial,
+                    face = Font:getFace("cfont", math.max(14, math.floor(cover_h * 0.25))),
+                }
             }
+        end
+
+        local cover_frame = FrameContainer:new{
+            width       = cover_w,
+            height      = cover_h,
+            bordersize  = Size.border.thin,
+            bordercolor = Blitbuffer.COLOR_LIGHT_GRAY,
+            background  = Blitbuffer.COLOR_WHITE,
+            cover_widget,
+        }
+
+        local title_text = TextWidget:new{
+            text = book.title or T("Unknown Title"),
+            face = Font:getFace("cfont", 20),
+            bold = true,
+            max_width = text_w,
+            align = "left",
+        }
+        local author_text = TextWidget:new{
+            text = book.author or T("Unknown Author"),
+            face = Font:getFace("cfont", 16),
+            max_width = text_w,
+            align = "left",
+        }
+        local details_str = string.format("%s - %s - %s - \u{2605} %s",
+            book.lang or "N/A",
+            book.format or "N/A",
+            book.size or "N/A",
+            book.rating or "N/A"
+        )
+        local details_text = TextWidget:new{
+            text = details_str,
+            face = Font:getFace("cfont", 14),
+            max_width = text_w,
+            align = "left",
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+
+        local text_group = VerticalGroup:new{
+            align = "left",
+            title_text,
+            author_text,
+            details_text,
+        }
+
+        local content_row = HorizontalGroup:new{
+            align = "center",
+            cover_frame,
+            WidgetContainer:new{ dimen = Geom:new{ w = padding, h = inner_h } }, -- spacing
+            text_group,
+        }
+
+        return FrameContainer:new{
+            width       = self._cell_w,
+            height      = self._cell_h,
+            padding     = padding,
+            bordersize  = Size.border.thin,
+            bordercolor = Blitbuffer.COLOR_LIGHT_GRAY,
+            background  = Blitbuffer.COLOR_WHITE,
+            content_row,
+        }
+    else
+        -- Grid layout
+        local inner
+        if has_cover then
+            local ok, img = pcall(ImageWidget.new, ImageWidget, {
+                file = cover_path, width = inner_w, height = inner_h, scale_factor = 0,
+            })
+            if ok then inner = img end
+        end
+
+        if not inner then
+            local initial = (book.title and book.title ~= "") and book.title:sub(1,1):upper() or "?"
+            inner = CenterContainer:new{
+                dimen = Geom:new{ w = inner_w, h = inner_h },
+                TextWidget:new{
+                    text = initial,
+                    face = Font:getFace("cfont", math.max(14, math.floor(inner_h * 0.25))),
+                }
+            }
+        end
+
+        return FrameContainer:new{
+            width       = self._cell_w,
+            height      = self._cell_h,
+            padding     = padding,
+            bordersize  = Size.border.thin,
+            bordercolor = Blitbuffer.COLOR_LIGHT_GRAY,
+            background  = Blitbuffer.COLOR_WHITE,
+            inner,
         }
     end
-
-    return FrameContainer:new{
-        width       = self._cell_w,
-        height      = self._cell_h,
-        padding     = padding,
-        bordersize  = Size.border.thin,
-        bordercolor = Blitbuffer.COLOR_LIGHT_GRAY,
-        background  = Blitbuffer.COLOR_WHITE,
-        inner,
-    }
 end
 
 function CoverGrid:_bookAtGesture(ges)
@@ -243,8 +352,9 @@ function CoverGrid:onSwipe(_, ges)
     return false
 end
 
-function CoverGrid:updateBooks(books)
+function CoverGrid:updateBooks(books, has_more)
     self.books = books or {}
+    self.has_more_api_results = has_more
     self._first_visible_row = 0
     self:_build()
     UIManager:setDirty("all", "full")
@@ -271,6 +381,7 @@ local SearchDialog = InputContainer:extend{
     _position = nil,
     _cache    = nil,
     cover_grid_mode   = false,
+    no_search_bar     = false,
     _cover_grid       = nil,
     menu_container    = nil,
     _content_height   = nil,
@@ -320,71 +431,79 @@ function SearchDialog:init()
     local tb_h = titlebar:getSize().h
 
     -- ── Search bar ────────────────────────────────────────────────────────
-    local go_btn_w     = Screen:scaleBySize(52)
-    local filter_btn_w = Screen:scaleBySize(52)
-    local input_w      = fiw - go_btn_w - filter_btn_w
+    local search_row
+    local sr_h = 0
+    if not self.no_search_bar then
+        local go_btn_w     = Screen:scaleBySize(52)
+        local filter_btn_w = Screen:scaleBySize(52)
+        local input_w      = fiw - go_btn_w - filter_btn_w
 
-    self._last_query = self.def_search_input or ""
+        self._last_query = self.def_search_input or ""
 
-    self._search_display_btn = Button:new{
-        text      = self._last_query ~= "" and self._last_query or T("Search books\u{2026}"),
-        width     = input_w,
-        align     = "left",
-        bordersize = Size.border.thin,
-        callback  = function() self:_openSearchInput() end,
-    }
+        self._search_display_btn = Button:new{
+            text      = self._last_query ~= "" and self._last_query or T("Search books\u{2026}"),
+            width     = input_w,
+            align     = "left",
+            bordersize = Size.border.thin,
+            callback  = function() self:_openSearchInput() end,
+        }
 
-    local go_btn = Button:new{
-        text      = T("\u{f002}"),
-        width     = go_btn_w,
-        bordersize = Size.border.thin,
-        callback  = function()
-            if self._last_query ~= "" then
-                self:_doSearch(self._last_query)
-            else
-                self:_openSearchInput()
-            end
-        end,
-    }
+        local go_btn = Button:new{
+            text      = T("\u{f002}"),
+            width     = go_btn_w,
+            bordersize = Size.border.thin,
+            callback  = function()
+                if self._last_query ~= "" then
+                    self:_doSearch(self._last_query)
+                else
+                    self:_openSearchInput()
+                end
+            end,
+        }
 
-    local filter_btn = Button:new{
-        text      = T("\u{2261}"),
-        width     = filter_btn_w,
-        bordersize = Size.border.thin,
-        callback  = function() self:_showFiltersMenu() end,
-    }
+        local filter_btn = Button:new{
+            text      = T("\u{2261}"),
+            width     = filter_btn_w,
+            bordersize = Size.border.thin,
+            callback  = function() self:_showFiltersMenu() end,
+        }
 
-    local search_row = HorizontalGroup:new{
-        dimen = Geom:new{ w = fiw }, align = "center",
-        self._search_display_btn, go_btn, filter_btn,
-    }
-    local sr_h = search_row:getSize().h
+        search_row = HorizontalGroup:new{
+            dimen = Geom:new{ w = fiw }, align = "center",
+            self._search_display_btn, go_btn, filter_btn,
+        }
+        sr_h = search_row:getSize().h
+    end
 
     -- ── Toggle + Refresh ──────────────────────────────────────────────────
-    local icon_sz = Size.item.height_default + 2*Size.padding.default + 2*Size.border.thin
-    local refresh_btn = IconButton:new{
-        icon = "cre.render.reload", height = icon_sz, width = icon_sz,
-        padding_right = Size.padding.button,
-        callback = function() self:forceFetchAndReloadMenu() end,
-    }
-    local tw = fiw - refresh_btn.width - (refresh_btn.padding_right or 0)
-    self.toggle_switch = ToggleSwitch:new{
-        width = tw, font_size = 20, alternate = false,
-        enabled = (toggle_items_count ~= 1),
-        toggle = toggle_text_list, values = toggle_values,
-        config = {
-            onConfigChoose = function(_, _values, name, event, args, _position)
-                local pos = type(_position) == "number" and _position or tonumber(name)
-                UIManager:nextTick(function() self:ToggleSwitchCallBack(pos) end)
-            end
+    local toggle_grp
+    local tg_h = 0
+    if toggle_items_count > 1 then
+        local icon_sz = Size.item.height_default + 2*Size.padding.default + 2*Size.border.thin
+        local refresh_btn = IconButton:new{
+            icon = "cre.render.reload", height = icon_sz, width = icon_sz,
+            padding_right = Size.padding.button,
+            callback = function() self:forceFetchAndReloadMenu() end,
         }
-    }
-    local toggle_grp = HorizontalGroup:new{
-        dimen = Geom:new{ w = fiw }, align = "center",
-        self.toggle_switch, refresh_btn,
-    }
-    self.toggle_switch:setPosition(self._position)
-    local tg_h = toggle_grp:getSize().h
+        local tw = fiw - refresh_btn.width - (refresh_btn.padding_right or 0)
+        self.toggle_switch = ToggleSwitch:new{
+            width = tw, font_size = 20, alternate = false,
+            enabled = (toggle_items_count ~= 1),
+            toggle = toggle_text_list, values = toggle_values,
+            config = {
+                onConfigChoose = function(_, _values, name, event, args, _position)
+                    local pos = type(_position) == "number" and _position or tonumber(name)
+                    UIManager:nextTick(function() self:ToggleSwitchCallBack(pos) end)
+                end
+            }
+        }
+        toggle_grp = HorizontalGroup:new{
+            dimen = Geom:new{ w = fiw }, align = "center",
+            self.toggle_switch, refresh_btn,
+        }
+        self.toggle_switch:setPosition(self._position)
+        tg_h = toggle_grp:getSize().h
+    end
 
     -- ── Content area ──────────────────────────────────────────────────────
     local content_h = fih - tb_h - sr_h - tg_h
@@ -397,9 +516,15 @@ function SearchDialog:init()
             width  = fiw,
             height = content_h,
             books  = self.books,
-            cols   = COVER_COLS,
+            cols   = self.cover_grid_cols or COVER_COLS,
+            rows   = self.cover_grid_rows,
             on_select_book = function(book) self.on_select_book_callback(book) end,
             on_hold_book   = function(book) self:_showContextMenu(book) end,
+            has_more_callback = function()
+                if self.has_more_api_results and self:_isEnablePagination() then
+                    self:_fetchAndProcessData((self.current_page_loaded or 1) + 1)
+                end
+            end,
         }
         content_widget = self._cover_grid
         self.menu_container = nil
@@ -413,7 +538,9 @@ function SearchDialog:init()
             self.menu_container.key_events.Close    = nil
             self.menu_container.key_events.FocusRight = nil
             self.menu_container.key_events.Right    = nil
-            self.toggle_switch:disableFocusManagement(self[1])
+            if self.toggle_switch then
+                self.toggle_switch:disableFocusManagement(self[1])
+            end
         end
     end
 
@@ -427,10 +554,10 @@ function SearchDialog:init()
     local inner_vgroup = VerticalGroup:new{
         align = "left",
         titlebar,
-        search_row,
-        toggle_grp,
-        self.container_parent,
     }
+    if search_row then table.insert(inner_vgroup, search_row) end
+    if toggle_grp then table.insert(inner_vgroup, toggle_grp) end
+    table.insert(inner_vgroup, self.container_parent)
 
     self[1] = FrameContainer:new{
         width = self.width, height = self.height,
@@ -557,7 +684,7 @@ function SearchDialog:reloadFromBookData(books, skip_cache, select_number, no_re
     self.books = books or {}
 
     if self.cover_grid_mode and self._cover_grid then
-        self._cover_grid:updateBooks(self.books)
+        self._cover_grid:updateBooks(self.books, self.has_more_api_results)
     elseif self.menu_container then
         self.menu_container.item_table = self:_getMenuItems(self.books)
         self.menu_container:updateItems(select_number, no_recalculate_dimen)
@@ -635,6 +762,14 @@ end
 
 function SearchDialog:appendBatchDataAndReload(books)
     self:extendBatchData(books)
+    self:reloadFromBookData(nil, nil, 1)
+end
+
+function SearchDialog:replaceBatchDataAndReload(books)
+    self.books = {}
+    if type(books) == "table" then
+        for _, b in ipairs(books) do table.insert(self.books, b) end
+    end
     self:reloadFromBookData(nil, nil, 1)
 end
 
