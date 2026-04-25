@@ -12,6 +12,7 @@ local CenterContainer = require("ui/widget/container/centercontainer")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local TextWidget = require("ui/widget/textwidget")
+local TextBoxWidget = require("ui/widget/textboxwidget")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local ButtonTable = require("ui/widget/buttontable")
 local TitleBar = require("ui/widget/titlebar")
@@ -155,23 +156,34 @@ function BookDetailsDialog:init()
 
     -- 5. Description (only when text exists)
     local desc_text = ""
-    if self.book.description and self.book.description ~= "" then
-        desc_text = util.htmlEntitiesToUtf8(self.book.description)
-        desc_text = string.gsub(desc_text, "<[^>]+>", "")
-        desc_text = util.trim(desc_text)
+    if type(self.book.description) == "string" and self.book.description ~= "" then
+        local raw = util.htmlEntitiesToUtf8(self.book.description)
+        -- Paragraph ends become blank lines
+        raw = raw:gsub("</%s*[Pp]%s*>", "\n\n")
+        -- <br> variants become single newlines
+        raw = raw:gsub("<[Bb][Rr]%s*/?>", "\n")
+        -- Strip all remaining HTML tags (including empty ones like <>)
+        raw = raw:gsub("<[^>]*>", "")
+        -- Normalize non-breaking space (UTF-8: \194\160) to regular space
+        raw = raw:gsub("\194\160", " ")
+        -- Normalize line endings and collapse runs of 3+ blank lines into 2
+        raw = raw:gsub("\r\n", "\n"):gsub("\r", "\n")
+        raw = raw:gsub("\n[ \t]*\n[ \t]*\n+", "\n\n")
+        desc_text = util.trim(raw)
     end
     local description_widget
     local desc_h = 0
     if desc_text ~= "" then
-        desc_h = math.min(Screen:scaleBySize(200), math.floor(screen_h * 0.25))
+        local max_desc_h = math.min(Screen:scaleBySize(200), math.floor(screen_h * 0.25))
+        local text_box = TextBoxWidget:new{
+            text  = desc_text,
+            face  = Font:getFace("cfont", 17),
+            width = inner_w,
+        }
+        desc_h = math.min(text_box:getSize().h, max_desc_h)
         description_widget = ScrollableContainer:new{
             dimen  = Geom:new{ w = inner_w, h = desc_h },
-            widget = TextWidget:new{
-                text      = desc_text,
-                face      = Font:getFace("cfont", 17),
-                max_width = inner_w,
-                align     = "left",
-            },
+            widget = text_box,
         }
     end
 

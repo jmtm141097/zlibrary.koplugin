@@ -640,8 +640,30 @@ function Zlibrary:searchSimilarBooks(book_stub)
         log_context = "searchSimilarBooks",
         results_member_name = "current_similar_books",
         display_menu_func = function(ui_self, books, plugin_self)
-            local source_title = book_stub.title
-            Ui.showSimilarBooksMenu(ui_self, books, plugin_self, source_title)
+            local similar_dialog = MultiSearchDialog:new{
+                title = T("Similar Books") .. ": " .. (book_stub.title or ""),
+                cover_grid_mode = true,
+                no_search_bar = true,
+                cover_grid_cols = 1,
+                cover_grid_rows = 5,
+                books = books,
+                def_position = 1,
+                on_select_book_callback = function(book)
+                    self:onSelectRecommendedBook(book)
+                end,
+                on_search_callback = function(def_input)
+                    Ui.showSearchDialog(self, def_input)
+                end,
+                on_similar_books_callback = function(book)
+                    self:searchSimilarBooks(book)
+                end,
+                toggle_items = {{
+                    text = T("Similar Books"),
+                    callback = function(widget, page, is_refresh) end,
+                }},
+            }
+            self.dialog_manager:trackDialog(similar_dialog)
+            similar_dialog:fetchAndShow()
         end,
         requires_auth = true,
     }, book_stub.id, book_stub.hash)
@@ -969,11 +991,7 @@ function Zlibrary:displaySearchResults(initial_book_data_list, query_string)
         current_page_loaded = self.current_search_api_page_loaded,
         has_more_api_results = self.has_more_api_results,
         on_select_book_callback = function(book)
-            if book.needs_detail_fetch then
-                self:onSelectSearchBook(book)
-            else
-                Ui.showBookDetails(self, book)
-            end
+            self:onSelectRecommendedBook(book)
         end,
         on_search_callback = function(def_input)
             Ui.showSearchDialog(self, def_input)
