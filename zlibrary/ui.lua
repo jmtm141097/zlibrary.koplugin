@@ -10,6 +10,7 @@ local util = require("util")
 local logger = require("logger")
 local Config = require("zlibrary.config")
 local Api = require("zlibrary.api")
+local Cache = require("zlibrary.cache")
 local AsyncHelper = require("zlibrary.async_helper")
 local coroutine = require("coroutine")
 
@@ -40,12 +41,8 @@ local function _closeAndUntrackDialog(dialog)
     end
 end
 
-local function _colon_concat(a, b)
-    return a .. ": " .. b
-end
-
 function Ui.colonConcat(a, b)
-    return _colon_concat(a, b)
+    return a .. ": " .. b
 end
 
 function Ui.showInfoMessage(text)
@@ -580,7 +577,7 @@ function Ui.createBookMenuItem(book_data, parent_zlibrary_instance)
         end
     end
     if book_data.size and book_data.size ~= "N/A" then table.insert(additional_info_parts, book_data.size) end
-    if book_data.rating and book_data.rating ~= "N/A" then table.insert(additional_info_parts, _colon_concat(T("Rating"), book_data.rating)) end
+    if book_data.rating and book_data.rating ~= "N/A" then table.insert(additional_info_parts, Ui.colonConcat(T("Rating"), book_data.rating)) end
 
     if #additional_info_parts > 0 then
         combined_text = combined_text .. " | " .. table.concat(additional_info_parts, " | ")
@@ -641,7 +638,7 @@ end
 function Ui.createSearchResultsMenu(parent_ui_ref, query_string, initial_menu_items, on_goto_page_handler)
     local search_order_name = Config.getSearchOrderName()
     local menu = Menu:new{
-        title = _colon_concat(T("Search Results"), query_string),
+        title = Ui.colonConcat(T("Search Results"), query_string),
         subtitle = string.format("%s: %s", T("Sort by"), search_order_name),
         item_table = initial_menu_items,
         parent = parent_ui_ref,
@@ -750,9 +747,7 @@ local function _showBooksMenu(ui_self, options, plugin_self)
         table.insert(menu_items, {
             text = menu_item.text,
             shortcut = menu_item.shortcut,
-            callback = function()
-                plugin_self:onSelectRecommendedBook(book)
-            end,
+            callback = menu_item.callback,
         })
     end
 
@@ -1216,11 +1211,11 @@ function Ui.showCommentsDialog(parent_zlibrary, book_comments)
 
     local COMMENTS_CSS = "body{padding-top:20px;}.comment-node{margin-top:1.2em;margin-bottom:1.2em;}.comment-reply{border-left:2px solid #ccc;padding-left:1em;}.comment-inner{padding-bottom:1em;border-bottom:1px solid #e0e0e0;}.comment-header{font-weight:bold;margin-bottom:0.5em;color:#333;}.comment-body{margin-bottom:0.5em;line-height:1.4;word-break:break-word;}.comment-meta{font-size:0.85em;color:#666;font-style:italic;}"
 
+    -- FootnoteWidget caps its height using Screen:getHeight() internally.
+    -- Reporting 2× the real height lets it occupy the full screen for comments.
+    -- Restoration is guaranteed (outside pcall) so concurrent callers are unaffected.
     local original_getHeight = Screen.getHeight
-    Device.screen.getHeight = function(self)
-        return original_getHeight(self) * 2
-    end
-
+    Device.screen.getHeight = function(s) return original_getHeight(s) * 2 end
     local comments_popup
     local ok, err = pcall(function()
         comments_popup = FootnoteWidget:new{
@@ -1240,7 +1235,6 @@ function Ui.showCommentsDialog(parent_zlibrary, book_comments)
             covers_footer = false,
         }
     end)
-
     Device.screen.getHeight = original_getHeight
 
     if not ok then
@@ -1252,11 +1246,6 @@ end
 
 function Ui.prefetchCoversSync(books, max_covers)
     if type(books) ~= "table" then return false end
-
-    local Cache = require("zlibrary.cache")
-    local util_mod = require("util")
-    local Api = require("zlibrary.api")
-    local logger = require("logger")
 
     max_covers = max_covers or 50
     local downloaded = 0
@@ -1274,7 +1263,7 @@ function Ui.prefetchCoversSync(books, max_covers)
         if book.cover and book.cover ~= "" and book.hash then
             local target_path = Cache.getCoverPath(book.hash)
 
-            if util_mod.fileExists(target_path) then
+            if util.fileExists(target_path) then
                 -- already cached, skip
             else
                 local ok, result = pcall(Api.downloadBookCover, book.cover, target_path)
@@ -1301,6 +1290,10 @@ function Ui.prefetchCoversSync(books, max_covers)
     end
     logger.info(string.format("prefetchCoversSync: completed (%d downloads, timed_out=%s)", downloaded, tostring(timed_out)))
     return timed_out
+end
+
+function Ui.showAndTrackDialog(dialog)
+    return _showAndTrackDialog(dialog)
 end
 
 return Ui

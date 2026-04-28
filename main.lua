@@ -51,7 +51,7 @@ function Zlibrary:init()
         logger.warn("self.ui or self.ui.menu not initialized in Zlibrary:init")
     end
 
-    self._runtime_cache = Cache:new({name = "_runtime_cache"})
+    self._runtime_cache = Config.getRuntimeCache()
 
     -- Limpieza silenciosa de covers antiguos (>7 días)
     pcall(Cache.cleanOldCovers, 7)
@@ -752,9 +752,9 @@ function Zlibrary:onSelectRecommendedBook(book_stub)
     local on_success = function(ui_self, api_result, plugin_self)
         local desc = api_result.book.description
         local desc_len = (type(desc) == "string") and #desc or 0
-        logger.info(string.format("Zlibrary:DEBUG - ID: %s, Desc type: %s, Length: %d", tostring(api_result.book.id), type(desc), desc_len))
-        if desc_len > 0 then logger.info("Zlibrary:DEBUG - Desc start: " .. string.sub(desc, 1, 50)) end
-        
+        logger.dbg(string.format("Zlibrary:DEBUG - ID: %s, Desc type: %s, Length: %d", tostring(api_result.book.id), type(desc), desc_len))
+        if desc_len > 0 then logger.dbg("Zlibrary:DEBUG - Desc start: " .. string.sub(desc, 1, 50)) end
+
         Ui.showBookDetails(self, api_result.book)
         book_cache:insert("details", api_result.book)
     end
@@ -811,7 +811,7 @@ function Zlibrary:onSelectSearchBook(book_data)
             Ui.closeMessage(loading_msg)
             local desc = api_result.book.description
             local desc_len = (type(desc) == "string") and #desc or 0
-            logger.info(string.format("Zlibrary:DEBUG-SEARCH - ID: %s, Desc type: %s, Length: %d", tostring(api_result.book.id), type(desc), desc_len))
+            logger.dbg(string.format("Zlibrary:DEBUG-SEARCH - ID: %s, Desc type: %s, Length: %d", tostring(api_result.book.id), type(desc), desc_len))
 
             -- Update original reference if it exists to avoid re-fetching in the same session
             if type(book_data) == "table" and type(api_result.book) == "table" then
@@ -993,7 +993,6 @@ function Zlibrary:displaySearchResults(initial_book_data_list, query_string)
         self.active_results_menu = nil
     end
 
-    local MultiSearchDialog = require("zlibrary.multisearch_dialog")
     self.active_results_menu = MultiSearchDialog:new{
         title = T("Search Results") .. ": " .. query_string,
         def_search_input = query_string,
@@ -1277,10 +1276,6 @@ function Zlibrary:fetchAndDisplayComments(book, skip_cache)
         end
     end
     
-    local task = function()
-        return Api.getBookComments(book.id)
-    end
-
     local on_success = function(ui_self, api_result, plugin_self)
         Ui.showCommentsDialog(self, api_result.comments)
         book_cache:insert("comments", api_result.comments)
@@ -1301,18 +1296,19 @@ function Zlibrary:fetchAndDisplayComments(book, skip_cache)
     }, book.id)
 end
 
-function Zlibrary:onExit()
+local function _cleanupDialogs(self, context)
     if self.dialog_manager and self.dialog_manager:getDialogCount() > 0 then
-        logger.info("Zlibrary:onExit - Cleaning up " .. self.dialog_manager:getDialogCount() .. " remaining dialogs")
+        logger.info(string.format("Zlibrary:%s - Cleaning up %d remaining dialogs", context, self.dialog_manager:getDialogCount()))
         self.dialog_manager:closeAllDialogs()
     end
 end
 
+function Zlibrary:onExit()
+    _cleanupDialogs(self, "onExit")
+end
+
 function Zlibrary:onCloseWidget()
-    if self.dialog_manager and self.dialog_manager:getDialogCount() > 0 then
-        logger.info("Zlibrary:onCloseWidget - Cleaning up " .. self.dialog_manager:getDialogCount() .. " remaining dialogs")
-        self.dialog_manager:closeAllDialogs()
-    end
+    _cleanupDialogs(self, "onCloseWidget")
 end
 
 return Zlibrary

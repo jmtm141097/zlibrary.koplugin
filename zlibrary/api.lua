@@ -17,16 +17,11 @@ function Api.isAuthenticationError(error_message)
     
     local error_str = tostring(error_message)
 
-    if string.find(error_str, "Please login", 1, true) ~= nil or 
+    if string.find(error_str, "Please login", 1, true) ~= nil or
        string.find(error_str, "Incorrect email or password", 1, true) ~= nil then
         return true
     end
-    
 
-    if string.find(error_str, "Download limit reached", 1, true) ~= nil then
-        return true
-    end
-    
     return false
 end
 
@@ -38,6 +33,12 @@ local function _transformApiBookData(api_books)
     local is_single = api_books.id ~= nil
     local books = is_single and { api_books } or api_books
 
+    local function _extractDesc(b)
+        local d = b.description or b.description_text or b.descriptionText or b.abstract
+        if type(d) == "table" then d = d.text or d.content or (d[1] and type(d[1]) == "string" and d[1]) end
+        return (type(d) == "string" and d ~= "") and d or nil
+    end
+
     local transformed_books = {}
 
     for _, book in ipairs(books) do
@@ -46,19 +47,12 @@ local function _transformApiBookData(api_books)
             -- Handle case where dl field contains 'exactEnd' - mark for detail fetch
             local download_url = book.dl
             local needs_detail_fetch = false
-            
-            -- If description is missing or invalid, we likely need to fetch full details (typical for search results)
-            local function _extractDesc(b)
-                local d = b.description or b.description_text or b.descriptionText or b.abstract
-                if type(d) == "table" then d = d.text or d.content or (d[1] and type(d[1]) == "string" and d[1]) end
-                return (type(d) == "string" and d ~= "") and d or nil
-            end
-            
+
             local extracted_description = _extractDesc(book)
-            print("[[[ZLIB-DEBUG]]] API - Book ID: " .. tostring(book.id) .. " - Title: " .. tostring(book.title))
-            print("[[[ZLIB-DEBUG]]] API - Extracted Desc Length: " .. tostring(extracted_description and #extracted_description or 0))
+            logger.dbg("[[[ZLIB-DEBUG]]] API - Book ID: " .. tostring(book.id) .. " - Title: " .. tostring(book.title))
+            logger.dbg("[[[ZLIB-DEBUG]]] API - Extracted Desc Length: " .. tostring(extracted_description and #extracted_description or 0))
             if extracted_description then
-                print("[[[ZLIB-DEBUG]]] API - Desc Start: " .. string.sub(extracted_description, 1, 50))
+                logger.dbg("[[[ZLIB-DEBUG]]] API - Desc Start: " .. string.sub(extracted_description, 1, 50))
             end
             
             if not extracted_description then
@@ -223,7 +217,7 @@ end
 function Api.makeHttpRequest(options)
     logger.dbg("Api.makeHttpRequest - START -", options.url, options.method or "GET")
     
-    local response_body_table = {}
+    local response_body_table
     local result = { body = nil, status_code = nil, error = nil, headers = nil }
 
     local sink_to_use = options.sink
@@ -835,7 +829,7 @@ function Api.favoriteBook(user_id, user_key, book_stub)
 end
 
 function Api.healthCheck(baseUrl)
-    local url = baseUrl .. "/eapi/info/ok"
+    local url = Config.getHealthCheckUrl(baseUrl)
 
     local http_result = Api.makeHttpRequest{
         url = url,

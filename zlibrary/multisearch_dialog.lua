@@ -647,7 +647,7 @@ function SearchDialog:_showContextMenu(book)
         title = string.format("\u{f002} %s", T("Search")),
         title_align = "center",
     }
-    UIManager:show(dialog)
+    Ui().showAndTrackDialog(dialog)
 end
 
 -- ── Key navigation ────────────────────────────────────────────────────────────
@@ -779,16 +779,13 @@ function SearchDialog:extendBatchData(books)
 end
 
 function SearchDialog:appendBatchDataAndReload(books)
-    self:extendBatchData(books)
-    self:reloadFromBookData(nil, nil, 1)
+    local all_books = self:extendBatchData(books)
+    self:reloadFromBookData(all_books, nil, 1)
 end
 
 function SearchDialog:replaceBatchDataAndReload(books)
-    self.books = {}
-    if type(books) == "table" then
-        for _, b in ipairs(books) do table.insert(self.books, b) end
-    end
-    self:reloadFromBookData(nil, nil, 1)
+    self.books = type(books) == "table" and books or {}
+    self:reloadFromBookData(self.books, nil, 1)
 end
 
 function SearchDialog:setPaginationState(has_more, current_page)
@@ -858,7 +855,7 @@ function SearchDialog:_showFiltersMenu()
             end }},
         },
     }
-    UIManager:show(filter_dialog)
+    Ui().showAndTrackDialog(filter_dialog)
 end
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────

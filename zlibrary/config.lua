@@ -36,7 +36,7 @@ Config.SEARCH_RESULTS_LIMIT = 30
 -- Timeout configuration for different operations (block_timeout, total_timeout)
 Config.TIMEOUT_LOGIN = { 10, 15 }        -- Login operations
 Config.TIMEOUT_SEARCH = { 15, 15 }       -- Search operations
-Config.TIMEOUT_BOOK_DETAILS = { 15, 5 }  -- Book details operations
+Config.TIMEOUT_BOOK_DETAILS = { 5, 15 }  -- Book details operations
 Config.TIMEOUT_RECOMMENDED = { 30, 15 }  -- Recommended books operations
 Config.TIMEOUT_POPULAR = { 30, 15 }      -- Popular books operations
 Config.TIMEOUT_DOWNLOAD = { 15, -1 }    -- Book download operations (infinite total timeout if data flows)
@@ -162,6 +162,10 @@ local function _getConfigRuntimeCache()
         _config_runtime_cache = Cache:new{ name = "_runtime_cache" }
     end
     return _config_runtime_cache
+end
+
+function Config.getRuntimeCache()
+    return _getConfigRuntimeCache()
 end
 
 function Config.getCacheRealUrl()
@@ -339,6 +343,10 @@ function Config.getMostPopularBooksUrl()
     local base = Config.getBaseUrl()
     if not base then return nil end
     return base .. "/eapi/book/most-popular"
+end
+
+function Config.getHealthCheckUrl(base)
+    return base and (base .. "/eapi/info/ok")
 end
 
 function Config.getSetting(key, default)
