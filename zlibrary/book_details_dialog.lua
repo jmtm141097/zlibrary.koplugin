@@ -13,6 +13,7 @@ local HorizontalGroup = require("ui/widget/horizontalgroup")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local TextWidget = require("ui/widget/textwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
+local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local ButtonTable = require("ui/widget/buttontable")
 local TitleBar = require("ui/widget/titlebar")
 local InputContainer = require("ui/widget/container/inputcontainer")
@@ -175,57 +176,42 @@ function BookDetailsDialog:init()
 
     local description_widget
     if desc_text ~= "" then
-        local face = Font:getFace("cfont", Screen:scaleBySize(17))
-        
-        -- We show a shorter preview (300 chars) to ensure the button fits in the dialog
         local is_long = #desc_text > 300
-        local preview_text = is_long and (string.sub(desc_text, 1, 297) .. "...") or desc_text
+        local preview_text = is_long and (string.sub(desc_text, 1, 297) .. "…") or desc_text
+        local open_full_desc = is_long and function()
+            local Ui = require("zlibrary.ui")
+            Ui.showFullTextDialog(T("Description"), desc_text)
+        end or nil
 
-        local label = TextWidget:new{
-            text = T("Description") .. (is_long and (" (" .. T("tap to view full") .. "):") or ":"),
-            face = Font:getFace("cfont", Screen:scaleBySize(16)),
-            bold = true,
-            max_width = inner_w,
+        -- Label is a tappable Button when description is long, plain text otherwise.
+        -- It sits at the TOP of the section so it is never clipped by the dialog height.
+        local Button = require("ui/widget/button")
+        local label = Button:new{
+            text           = T("Description") .. (is_long and (" \u{2139}") or ":"),
+            callback       = open_full_desc,
+            width          = inner_w,
+            bordersize     = is_long and Size.border.thin or 0,
+            padding_h      = 0,
+            padding_v      = Screen:scaleBySize(2),
+            text_font_face = "cfont",
+            text_font_size = Screen:scaleBySize(16),
+            text_font_bold = true,
+            align          = "left",
         }
-        
+
         local text_content = TextBoxWidget:new{
             text      = preview_text,
-            face      = face,
+            face      = Font:getFace("cfont", Screen:scaleBySize(17)),
             width     = inner_w,
             alignment = "justify",
         }
 
-        local items = {
+        description_widget = VerticalGroup:new{
             align = "left",
             label,
             WidgetContainer:new{ dimen = Geom:new{ w = inner_w, h = Screen:scaleBySize(4) } },
             text_content,
         }
-
-        -- If description is long, add a clear action to read it all
-        if is_long then
-            local read_more_btn = ButtonTable:new{
-                width = inner_w,
-                buttons = {{
-                    text = "\u{2139} " .. T("Read full description"),
-                    callback = function()
-                        logger.info("Zlibrary:Dialog - Opening full description viewer")
-                        -- Use UIManager to close current dialog and show new one if needed, 
-                        -- but showFullTextDialog should overlay.
-                        local Ui = require("zlibrary.ui")
-                        if Ui and Ui.showFullTextDialog then
-                            Ui.showFullTextDialog(T("Description"), desc_text)
-                        else
-                            logger.err("Zlibrary:Dialog - Ui.showFullTextDialog not found")
-                        end
-                    end,
-                }}
-            }
-            table.insert(items, WidgetContainer:new{ dimen = Geom:new{ w = inner_w, h = Screen:scaleBySize(6) } })
-            table.insert(items, read_more_btn)
-        end
-
-        description_widget = VerticalGroup:new(items)
     end
 
     -- 6. Body content (cover + description)
@@ -239,11 +225,19 @@ function BookDetailsDialog:init()
         table.insert(body_vg, WidgetContainer:new{ dimen = Geom:new{ w = inner_w, h = fp } })
     end
 
-    -- 7. Compute dialog height
+    -- 7. Compute dialog and scroll-area heights
     local body_natural_h = body_vg:getSize().h
     local natural_h = tb_h + fp + body_natural_h + fp + buttons_h + 2 * fb
     local dialog_h  = math.min(natural_h, math.floor(screen_h * 0.94))
-    local body_h    = math.max(dialog_h - tb_h - 2 * fp - buttons_h - 2 * fb, Screen:scaleBySize(60))
+    local scroll_h  = math.max(dialog_h - tb_h - 2 * fp - buttons_h - 2 * fb, Screen:scaleBySize(60))
+
+    -- ScrollableContainer child must be at self[1], not in a named field.
+    local scroll_area = ScrollableContainer:new{
+        dimen = Geom:new{ w = inner_w, h = scroll_h },
+        body_vg,
+    }
+    -- Required by ScrollableContainer so UIManager clips repaints correctly.
+    self.cropping_widget = scroll_area
 
     -- 8. Center dialog on screen
     self[1] = CenterContainer:new{
@@ -258,10 +252,7 @@ function BookDetailsDialog:init()
                 align = "center",
                 title_bar,
                 WidgetContainer:new{ dimen = Geom:new{ w = content_w, h = fp } },
-                CenterContainer:new{
-                    dimen = Geom:new{ w = content_w, h = body_h },
-                    body_vg,
-                },
+                scroll_area,
                 WidgetContainer:new{ dimen = Geom:new{ w = content_w, h = fp } },
                 buttons_table,
             },
