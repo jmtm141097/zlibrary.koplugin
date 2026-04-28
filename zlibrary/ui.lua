@@ -8,12 +8,21 @@ local InputDialog = require("ui/widget/inputdialog")
 local Menu = require("zlibrary.menu")
 local util = require("util")
 local logger = require("logger")
+local Screen = require("device").screen
 local Config = require("zlibrary.config")
 local Api = require("zlibrary.api")
+local Cache = require("zlibrary.cache")
 local AsyncHelper = require("zlibrary.async_helper")
 local coroutine = require("coroutine")
 
 local Ui = {}
+
+-- Returns an items_per_page count scaled to screen height.
+-- Targets ~150 scaled pixels per item; clamped to [min_n, max_n].
+local function _screenItemsPerPage(min_n, max_n, item_h_hint)
+    local n = math.floor(Screen:getHeight() / Screen:scaleBySize(item_h_hint or 150))
+    return math.max(min_n, math.min(max_n, n))
+end
 
 local _plugin_instance = nil
 
@@ -40,12 +49,8 @@ local function _closeAndUntrackDialog(dialog)
     end
 end
 
-local function _colon_concat(a, b)
-    return a .. ": " .. b
-end
-
 function Ui.colonConcat(a, b)
-    return _colon_concat(a, b)
+    return a .. ": " .. b
 end
 
 function Ui.showInfoMessage(text)
@@ -121,11 +126,18 @@ function Ui.closeMessage(message_widget)
 end
 
 function Ui.showFullTextDialog(title, full_text)
+    if not full_text or full_text == "" then return end
     local dialog = TextViewer:new{
         title = title,
         text = full_text,
+        -- Ensure it takes up enough space
+        show_proportional_slider = true,
     }
-    _showAndTrackDialog(dialog)
+    if _plugin_instance and _plugin_instance.dialog_manager then
+        _plugin_instance.dialog_manager:showAndTrackDialog(dialog)
+    else
+        UIManager:show(dialog)
+    end
 end
 
 function Ui.showCoverDialog(title, img_path)
@@ -249,7 +261,9 @@ local function _showMultiSelectionDialog(parent_ui, title, setting_key, options_
             if ok then
                 if type(ok_callback) == "function" then
                     ok_callback(err)
-                else
+                elseif err then
+                    -- err is nil when the selection was cleared (Config.deleteSetting path),
+                    -- so only show the count message when something was actually saved.
                     Ui.showInfoMessage(string.format(T("%d items selected for %s."), err, title))
                 end
             else
@@ -322,6 +336,149 @@ function Ui.showGenericInputDialog(title, setting_key, current_value_or_default,
     }
     _showAndTrackDialog(dialog)
     dialog:onShowKeyboard()
+end
+
+function Ui.showFirstLaunchDialog(plugin_instance, on_done_callback)
+    local function done()
+        if type(on_done_callback) == "function" then on_done_callback() end
+    end
+
+    local email_dialog
+    local function showPasswordDialog(email)
+        local pwd_dialog
+        pwd_dialog = InputDialog:new{
+            title = T("Set password"),
+            text_type = "password",
+            buttons = {{
+                {
+                    text = T("Back"),
+                    callback = function()
+                        _closeAndUntrackDialog(pwd_dialog)
+                        Ui.showFirstLaunchDialog(plugin_instance, on_done_callback)
+                    end,
+                },
+                {
+                    text = T("Log in"),
+                    callback = function()
+                        local password = util.trim(pwd_dialog:getInputText() or "")
+                        _closeAndUntrackDialog(pwd_dialog)
+                        if password == "" then done(); return end
+                        Config.saveSetting(Config.SETTINGS_USERNAME_KEY, email)
+                        Config.saveSetting(Config.SETTINGS_PASSWORD_KEY, password)
+                        plugin_instance:login(function(login_ok)
+                            if not login_ok then
+                                Ui.showErrorMessage(T("Login failed. You can update credentials in Settings."))
+                            end
+                            done()
+                        end)
+                    end,
+                },
+            }},
+        }
+        _showAndTrackDialog(pwd_dialog)
+        pwd_dialog:onShowKeyboard()
+    end
+
+    local welcome_dialog
+    welcome_dialog = ConfirmBox:new{
+        title = T("Welcome to Z-Library"),
+        text = T("Log in to access personalized recommendations and higher download limits.\n\nYou can skip this and set credentials later in Settings."),
+        ok_text = T("Log in"),
+        cancel_text = T("Skip"),
+        ok_callback = function()
+            email_dialog = InputDialog:new{
+                title = T("Enter your email"),
+                input_hint = T("Email"),
+                buttons = {{
+                    {
+                        text = T("Cancel"),
+                        id = "close",
+                        callback = function()
+                            _closeAndUntrackDialog(email_dialog)
+                            done()
+                        end,
+                    },
+                    {
+                        text = T("Next"),
+                        callback = function()
+                            local email = util.trim(email_dialog:getInputText() or "")
+                            _closeAndUntrackDialog(email_dialog)
+                            if email == "" then done(); return end
+                            showPasswordDialog(email)
+                        end,
+                    },
+                }},
+            }
+            _showAndTrackDialog(email_dialog)
+            email_dialog:onShowKeyboard()
+        end,
+        cancel_callback = done,
+    }
+    _showAndTrackDialog(welcome_dialog)
+end
+
+function Ui.showCredentialsDialog(plugin_instance)
+    local current_email = Config.getSetting(Config.SETTINGS_USERNAME_KEY) or ""
+
+    local function showPasswordDialog(email)
+        local pwd_dialog
+        pwd_dialog = InputDialog:new{
+            title = T("Set password"),
+            text_type = "password",
+            buttons = {{
+                {
+                    text = T("Cancel"),
+                    callback = function()
+                        _closeAndUntrackDialog(pwd_dialog)
+                    end,
+                },
+                {
+                    text = T("Verify"),
+                    callback = function()
+                        local password = util.trim(pwd_dialog:getInputText() or "")
+                        _closeAndUntrackDialog(pwd_dialog)
+                        if password == "" then return end
+                        Config.saveSetting(Config.SETTINGS_USERNAME_KEY, email)
+                        Config.saveSetting(Config.SETTINGS_PASSWORD_KEY, password)
+                        plugin_instance:login(function(ok)
+                            if ok then
+                                Ui.showInfoMessage(T("Login successful!"))
+                            end
+                        end)
+                    end,
+                },
+            }},
+        }
+        _showAndTrackDialog(pwd_dialog)
+        pwd_dialog:onShowKeyboard()
+    end
+
+    local email_dialog
+    email_dialog = InputDialog:new{
+        title = T("Verify credentials"),
+        input_hint = T("Email"),
+        text = current_email,
+        buttons = {{
+            {
+                text = T("Cancel"),
+                id = "close",
+                callback = function()
+                    _closeAndUntrackDialog(email_dialog)
+                end,
+            },
+            {
+                text = T("Next"),
+                callback = function()
+                    local email = util.trim(email_dialog:getInputText() or "")
+                    _closeAndUntrackDialog(email_dialog)
+                    if email == "" then return end
+                    showPasswordDialog(email)
+                end,
+            },
+        }},
+    }
+    _showAndTrackDialog(email_dialog)
+    email_dialog:onShowKeyboard()
 end
 
 function Ui.showSearchDialog(parent_zlibrary, def_input)
@@ -428,7 +585,7 @@ function Ui.createBookMenuItem(book_data, parent_zlibrary_instance)
         end
     end
     if book_data.size and book_data.size ~= "N/A" then table.insert(additional_info_parts, book_data.size) end
-    if book_data.rating and book_data.rating ~= "N/A" then table.insert(additional_info_parts, _colon_concat(T("Rating"), book_data.rating)) end
+    if book_data.rating and book_data.rating ~= "N/A" then table.insert(additional_info_parts, Ui.colonConcat(T("Rating"), book_data.rating)) end
 
     if #additional_info_parts > 0 then
         combined_text = combined_text .. " | " .. table.concat(additional_info_parts, " | ")
@@ -449,14 +606,51 @@ function Ui.createBookMenuItem(book_data, parent_zlibrary_instance)
     }
 end
 
+function Ui.createColumnSearchItem(book_data, parent_zlibrary_instance)
+    local title = util.htmlEntitiesToUtf8((type(book_data.title) == "string" and book_data.title) or T("Unknown Title"))
+    local author = util.htmlEntitiesToUtf8((type(book_data.author) == "string" and book_data.author) or T("Unknown Author"))
+    local combined_text = title .. "\n" .. author
+
+    -- mandatory column: Lang · Format · Size · Year · ★Rating
+    local right_parts = {}
+    if book_data.lang and book_data.lang ~= "N/A" and book_data.lang ~= "" then
+        table.insert(right_parts, book_data.lang)
+    end
+    local selected_extensions = Config.getSearchExtensions()
+    if book_data.format and book_data.format ~= "N/A" then
+        if #selected_extensions ~= 1 then table.insert(right_parts, book_data.format) end
+    end
+    if book_data.size and book_data.size ~= "N/A" then table.insert(right_parts, book_data.size) end
+    if book_data.year and book_data.year ~= "N/A" and tostring(book_data.year) ~= "0" then
+        table.insert(right_parts, tostring(book_data.year))
+    end
+    if book_data.rating and book_data.rating ~= "N/A" then table.insert(right_parts, "\u{2605}" .. book_data.rating) end
+    local mandatory_text = #right_parts > 0 and table.concat(right_parts, " \u{b7} ") or nil
+
+    return {
+        text = combined_text,
+        mandatory = mandatory_text,
+        shortcut = book_data.hash and ("cover:" .. book_data.hash) or nil,
+        callback = function()
+            if book_data.needs_detail_fetch then
+                parent_zlibrary_instance:onSelectSearchBook(book_data)
+            else
+                Ui.showBookDetails(parent_zlibrary_instance, book_data)
+            end
+        end,
+        keep_menu_open = true,
+        original_book_data_ref = book_data,
+    }
+end
+
 function Ui.createSearchResultsMenu(parent_ui_ref, query_string, initial_menu_items, on_goto_page_handler)
     local search_order_name = Config.getSearchOrderName()
     local menu = Menu:new{
-        title = _colon_concat(T("Search Results"), query_string),
+        title = Ui.colonConcat(T("Search Results"), query_string),
         subtitle = string.format("%s: %s", T("Sort by"), search_order_name),
         item_table = initial_menu_items,
         parent = parent_ui_ref,
-        items_per_page = 5, -- Reducido de 10 a 5 para forzar mayor altura (ver bien las portadas)
+        items_per_page = _screenItemsPerPage(4, 8, 150),
         show_captions = true,
         onGotoPage = on_goto_page_handler,
         is_popout = false,
@@ -477,168 +671,14 @@ function Ui.appendSearchResultsToMenu(menu_instance, new_menu_items)
 end
 
 function Ui.showBookDetails(parent_zlibrary, book, clear_cache_callback)
-    
-    local is_cache = (type(clear_cache_callback) == "function")
-    -- Could not cache favorite IDs, hide favorite feature on init
-    local has_favorite_ids_cache = parent_zlibrary:isBookInFavorites()
-    
-    local title_text_for_html = (type(book.title) == "string" and book.title) or ""
-    local full_title = util.htmlEntitiesToUtf8(title_text_for_html)
-
-    local details_menu = Menu:new{
-        title = T("Book Details"),
-        subtitle = is_cache and "\u{F1C0}",
-        title_bar_left_icon = is_cache and "cre.render.reload",
-        item_table = {},
-        parent = parent_zlibrary.ui,
-        show_captions = true,
-        multilines_show_more_text = true
+    local BookDetailsDialog = require("zlibrary.book_details_dialog")
+    local dialog = BookDetailsDialog:new{
+        book = book,
+        parent_zlibrary = parent_zlibrary,
+        clear_cache_callback = clear_cache_callback,
     }
-
-    function details_menu:onLeftButtonTap()
-        if is_cache then
-            UIManager:close(self)
-            return clear_cache_callback and clear_cache_callback()
-        end
-    end
-
-    table.insert(details_menu.item_table, {
-        text = _colon_concat(T("Title"), full_title),
-        mandatory = "\u{25B7}",
-        callback = function()
-            if book.description and book.description ~= "" then
-                local desc_for_html = (type(book.description) == "string" and book.description) or ""
-                local full_description = util.htmlEntitiesToUtf8(util.trim(desc_for_html))
-                full_description = string.gsub(full_description, "<[Bb][Rr]%s*/?>", "\n")
-                full_description = string.gsub(full_description, "</[Pp]>", "\n\n")
-                full_description = string.gsub(full_description, "<[^>]+>", "")
-                full_description = string.gsub(full_description, "(\n\r?%s*){2,}", "\n\n")
-                Ui.showFullTextDialog(T("Description"), full_description)
-            else
-                Ui.showSimpleMessageDialog(T("Full Title"), full_title)
-            end
-        end,
-    })
-
-    local author_text_for_html = (type(book.author) == "string" and book.author) or ""
-    local full_author = util.htmlEntitiesToUtf8(author_text_for_html)
-    table.insert(details_menu.item_table, {
-        text = string.format("%s: %s", T("Author"), full_author),
-        mandatory = "\u{25B7}",
-        callback = function()
-            Ui.showSearchDialog(parent_zlibrary, full_author)
-        end,
-    })
-
-    if book.cover and book.cover ~= "" and book.hash then
-        table.insert(details_menu.item_table, {
-            text = string.format("%s %s", T("Cover"), T("(tap to view)")),
-            mandatory = "\u{25B7}",
-            callback = function()
-                parent_zlibrary:downloadAndShowCover(book)
-            end})
-    end
-
-    if book.year and book.year ~= "N/A" and tostring(book.year) ~= "0" then table.insert(details_menu.item_table, { text = _colon_concat(T("Year"), book.year), enabled = false }) end
-    if book.lang and book.lang ~= "N/A" then table.insert(details_menu.item_table, { text = _colon_concat(T("Language"), book.lang), enabled = false }) end
-
-    if book.format and book.format ~= "N/A" then
-        if book.download then
-            table.insert(details_menu.item_table, {
-                text = string.format(T("Format: %s (tap to download)"), book.format),
-                mandatory = "\u{25B7}",
-                callback = function()
-                    parent_zlibrary:downloadBook(book)
-                end,
-            })
-        else
-            table.insert(details_menu.item_table, { text = string.format(T("Format: %s (Download not available)"), book.format), enabled = false })
-        end
-    elseif book.download then
-        table.insert(details_menu.item_table, {
-            text = T("Download Book (Unknown Format)"),
-            mandatory = "\u{25B7}",
-            callback = function()
-                parent_zlibrary:downloadBook(book)
-            end,
-        })
-    end
-
-    if book.size and book.size ~= "N/A" then table.insert(details_menu.item_table, { text = _colon_concat(T("Size"), book.size), enabled = false }) end
-    if book.pages and book.pages ~= 0 then table.insert(details_menu.item_table, { text = _colon_concat(T("Pages"), book.pages), enabled = false }) end
-    if book.rating and book.rating ~= "N/A" then table.insert(details_menu.item_table, { text = _colon_concat(T("Rating"), book.rating), enabled = false }) end
-    table.insert(details_menu.item_table, {
-        text = T("Comments"),
-        mandatory = "\u{25B7}",
-        callback = function()
-            parent_zlibrary:fetchAndDisplayComments(book)
-        end,
-    })
-    if book.publisher and book.publisher ~= "" then
-        local publisher_for_html = (type(book.publisher) == "string" and book.publisher) or ""
-        table.insert(details_menu.item_table, { text = _colon_concat(T("Publisher"), util.htmlEntitiesToUtf8(publisher_for_html)), enabled = false })
-    end
-    if book.series and book.series ~= "" then
-        local series_for_html = (type(book.series) == "string" and book.series) or ""
-        table.insert(details_menu.item_table, { text = _colon_concat(T("Series"), util.htmlEntitiesToUtf8(series_for_html)), enabled = false })
-    end
-
-    table.insert(details_menu.item_table, { text = "---" })
-
-    table.insert(details_menu.item_table, {
-        text = T("More Similar Books"),
-        mandatory = "\u{F002}",
-        callback = function()
-            parent_zlibrary:searchSimilarBooks(book)
-        end,
-    })
-
-    table.insert(details_menu.item_table, {
-        text = T("Back"),
-        mandatory = "\u{21A9}",
-        callback = function()
-            if details_menu then UIManager:close(details_menu) end
-        end,
-    })
-
-    local function show_favorite_item(is_visible)
-        if is_visible then
-            local in_favorites = parent_zlibrary:isBookInFavorites(book) == true
-            -- Insert at the third-to-last position
-            table.insert(details_menu.item_table, #details_menu.item_table - 1, {
-                text = in_favorites and T("Remove From Favorites") or T("Add To Favorites"),
-                mandatory = in_favorites and "\u{2665}" or "\u{2661}",
-                callback = function()
-                    local reload = function()
-                         UIManager:close(details_menu)
-                         Ui.showBookDetails(parent_zlibrary, book, clear_cache_callback)
-                    end
-                    if in_favorites then
-                        parent_zlibrary:unfavoriteBook(book, reload)
-                        return
-                    end
-                    parent_zlibrary:favoriteBook(book, reload)
-                end,
-             })
-        end
-    end
-
-    -- Use cache if available
-    show_favorite_item(has_favorite_ids_cache)
-
-    _showAndTrackDialog(details_menu)
-    details_menu:updateItems()
-
-    if not has_favorite_ids_cache then
-        parent_zlibrary:validateFavoriteBookIds(function(precheck_ok)
-            if precheck_ok then
-                show_favorite_item(true)
-                details_menu:updateItems()
-            end
-        end)
-    end
-
-    return details_menu
+    _showAndTrackDialog(dialog)
+    return dialog
 end
 
 function Ui.confirmDownload(filename, ok_callback)
@@ -715,9 +755,7 @@ local function _showBooksMenu(ui_self, options, plugin_self)
         table.insert(menu_items, {
             text = menu_item.text,
             shortcut = menu_item.shortcut,
-            callback = function()
-                plugin_self:onSelectRecommendedBook(book)
-            end,
+            callback = menu_item.callback,
         })
     end
 
@@ -729,7 +767,7 @@ local function _showBooksMenu(ui_self, options, plugin_self)
         title = title,
         subtitle = subtitle,
         item_table = menu_items,
-        items_per_page = 5,
+        items_per_page = _screenItemsPerPage(4, 8, 150),
         show_captions = true,
         parent = ui_self.document_menu_parent_holder,
         is_popout = false,
@@ -1176,45 +1214,45 @@ function Ui.showCommentsDialog(parent_zlibrary, book_comments)
     end
 
     local Device = require("device")
-    local Screen = Device.screen
     local FootnoteWidget = require("ui/widget/footnotewidget")
 
     local COMMENTS_CSS = "body{padding-top:20px;}.comment-node{margin-top:1.2em;margin-bottom:1.2em;}.comment-reply{border-left:2px solid #ccc;padding-left:1em;}.comment-inner{padding-bottom:1em;border-bottom:1px solid #e0e0e0;}.comment-header{font-weight:bold;margin-bottom:0.5em;color:#333;}.comment-body{margin-bottom:0.5em;line-height:1.4;word-break:break-word;}.comment-meta{font-size:0.85em;color:#666;font-style:italic;}"
 
+    -- FootnoteWidget caps its height using Screen:getHeight() internally.
+    -- Reporting 2× the real height lets it occupy the full screen for comments.
+    -- Restoration is guaranteed (outside pcall) so concurrent callers are unaffected.
     local original_getHeight = Screen.getHeight
-    Device.screen.getHeight = function(self)
-        return original_getHeight(self) * 2
-    end
-
+    Device.screen.getHeight = function(s) return original_getHeight(s) * 2 end
     local comments_popup
-    comments_popup = FootnoteWidget:new{
-        html = generateCommentsHTML(book_comments),
-        css = COMMENTS_CSS,
-        close_callback = function()
-            UIManager:close(comments_popup)
-        end,
-        dialog = UIManager:getTopmostVisibleWidget(),
-        doc_margins = {
-            left = Screen:scaleBySize(20),
-            right = Screen:scaleBySize(20),
-            top = Screen:scaleBySize(20),
-            bottom = Screen:scaleBySize(20),
-        },
-        doc_font_size = Screen:scaleBySize(23),
-        covers_footer = false,
-    }
-
+    local ok, err = pcall(function()
+        comments_popup = FootnoteWidget:new{
+            html = generateCommentsHTML(book_comments),
+            css = COMMENTS_CSS,
+            close_callback = function()
+                UIManager:close(comments_popup)
+            end,
+            dialog = UIManager:getTopmostVisibleWidget(),
+            doc_margins = {
+                left = Screen:scaleBySize(20),
+                right = Screen:scaleBySize(20),
+                top = Screen:scaleBySize(20),
+                bottom = Screen:scaleBySize(20),
+            },
+            doc_font_size = Screen:scaleBySize(23),
+            covers_footer = false,
+        }
+    end)
     Device.screen.getHeight = original_getHeight
+
+    if not ok then
+        logger.warn("Zlibrary:UI - FootnoteWidget creation failed:", err)
+        return
+    end
     _showAndTrackDialog(comments_popup)
 end
 
 function Ui.prefetchCoversSync(books, max_covers)
     if type(books) ~= "table" then return false end
-
-    local Cache = require("zlibrary.cache")
-    local util_mod = require("util")
-    local Api = require("zlibrary.api")
-    local logger = require("logger")
 
     max_covers = max_covers or 50
     local downloaded = 0
@@ -1232,7 +1270,7 @@ function Ui.prefetchCoversSync(books, max_covers)
         if book.cover and book.cover ~= "" and book.hash then
             local target_path = Cache.getCoverPath(book.hash)
 
-            if util_mod.fileExists(target_path) then
+            if util.fileExists(target_path) then
                 -- already cached, skip
             else
                 local ok, result = pcall(Api.downloadBookCover, book.cover, target_path)
@@ -1259,6 +1297,10 @@ function Ui.prefetchCoversSync(books, max_covers)
     end
     logger.info(string.format("prefetchCoversSync: completed (%d downloads, timed_out=%s)", downloaded, tostring(timed_out)))
     return timed_out
+end
+
+function Ui.showAndTrackDialog(dialog)
+    return _showAndTrackDialog(dialog)
 end
 
 return Ui

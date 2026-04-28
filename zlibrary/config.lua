@@ -25,6 +25,8 @@ Config.SETTINGS_TIMEOUT_DOWNLOAD_KEY = "zlibrary_timeout_download"
 Config.SETTINGS_TIMEOUT_COVER_KEY = "zlibrary_timeout_cover"
 Config.SETTINGS_TIMEOUT_BOOK_COMMENTS_KEY = "zlibrary_timeout_book_comments"
 Config.CREDENTIALS_FILENAME = "zlibrary_credentials.lua"
+Config.SETTINGS_FIRST_LAUNCH_DONE_KEY = "zlibrary_first_launch_done"
+Config.SETTINGS_RECENT_SEARCHES_KEY = "zlibrary_recent_searches"
 
 Config.DEFAULT_DOWNLOAD_DIR_FALLBACK = G_reader_settings:readSetting("home_dir")
              or require("apps/filemanager/filemanagerutil").getDefaultDir()
@@ -34,7 +36,7 @@ Config.SEARCH_RESULTS_LIMIT = 30
 -- Timeout configuration for different operations (block_timeout, total_timeout)
 Config.TIMEOUT_LOGIN = { 10, 15 }        -- Login operations
 Config.TIMEOUT_SEARCH = { 15, 15 }       -- Search operations
-Config.TIMEOUT_BOOK_DETAILS = { 15, 5 }  -- Book details operations
+Config.TIMEOUT_BOOK_DETAILS = { 5, 15 }  -- Book details operations
 Config.TIMEOUT_RECOMMENDED = { 30, 15 }  -- Recommended books operations
 Config.TIMEOUT_POPULAR = { 30, 15 }      -- Popular books operations
 Config.TIMEOUT_DOWNLOAD = { 15, -1 }    -- Book download operations (infinite total timeout if data flows)
@@ -160,6 +162,10 @@ local function _getConfigRuntimeCache()
         _config_runtime_cache = Cache:new{ name = "_runtime_cache" }
     end
     return _config_runtime_cache
+end
+
+function Config.getRuntimeCache()
+    return _getConfigRuntimeCache()
 end
 
 function Config.getCacheRealUrl()
@@ -339,6 +345,10 @@ function Config.getMostPopularBooksUrl()
     return base .. "/eapi/book/most-popular"
 end
 
+function Config.getHealthCheckUrl(base)
+    return base and (base .. "/eapi/info/ok")
+end
+
 function Config.getSetting(key, default)
     return G_reader_settings:readSetting(key) or default
 end
@@ -510,6 +520,22 @@ end
 
 function Config.setBookCommentsTimeout(block_timeout, total_timeout)
     Config.setTimeoutConfig(Config.SETTINGS_TIMEOUT_BOOK_COMMENTS_KEY, block_timeout, total_timeout)
+end
+
+function Config.addRecentSearch(query)
+    if not query or util.trim(query) == "" then return end
+    query = util.trim(query)
+    local searches = Config.getSetting(Config.SETTINGS_RECENT_SEARCHES_KEY) or {}
+    for i = #searches, 1, -1 do
+        if searches[i] == query then table.remove(searches, i) end
+    end
+    table.insert(searches, 1, query)
+    while #searches > 10 do table.remove(searches) end
+    Config.saveSetting(Config.SETTINGS_RECENT_SEARCHES_KEY, searches)
+end
+
+function Config.getRecentSearches()
+    return Config.getSetting(Config.SETTINGS_RECENT_SEARCHES_KEY) or {}
 end
 
 return Config
