@@ -8,6 +8,7 @@ local InputDialog = require("ui/widget/inputdialog")
 local Menu = require("zlibrary.menu")
 local util = require("util")
 local logger = require("logger")
+local Screen = require("device").screen
 local Config = require("zlibrary.config")
 local Api = require("zlibrary.api")
 local Cache = require("zlibrary.cache")
@@ -15,6 +16,13 @@ local AsyncHelper = require("zlibrary.async_helper")
 local coroutine = require("coroutine")
 
 local Ui = {}
+
+-- Returns an items_per_page count scaled to screen height.
+-- Targets ~150 scaled pixels per item; clamped to [min_n, max_n].
+local function _screenItemsPerPage(min_n, max_n, item_h_hint)
+    local n = math.floor(Screen:getHeight() / Screen:scaleBySize(item_h_hint or 150))
+    return math.max(min_n, math.min(max_n, n))
+end
 
 local _plugin_instance = nil
 
@@ -642,7 +650,7 @@ function Ui.createSearchResultsMenu(parent_ui_ref, query_string, initial_menu_it
         subtitle = string.format("%s: %s", T("Sort by"), search_order_name),
         item_table = initial_menu_items,
         parent = parent_ui_ref,
-        items_per_page = 4,
+        items_per_page = _screenItemsPerPage(4, 8, 150),
         show_captions = true,
         onGotoPage = on_goto_page_handler,
         is_popout = false,
@@ -759,7 +767,7 @@ local function _showBooksMenu(ui_self, options, plugin_self)
         title = title,
         subtitle = subtitle,
         item_table = menu_items,
-        items_per_page = 5,
+        items_per_page = _screenItemsPerPage(4, 8, 150),
         show_captions = true,
         parent = ui_self.document_menu_parent_holder,
         is_popout = false,
@@ -1206,7 +1214,6 @@ function Ui.showCommentsDialog(parent_zlibrary, book_comments)
     end
 
     local Device = require("device")
-    local Screen = Device.screen
     local FootnoteWidget = require("ui/widget/footnotewidget")
 
     local COMMENTS_CSS = "body{padding-top:20px;}.comment-node{margin-top:1.2em;margin-bottom:1.2em;}.comment-reply{border-left:2px solid #ccc;padding-left:1em;}.comment-inner{padding-bottom:1em;border-bottom:1px solid #e0e0e0;}.comment-header{font-weight:bold;margin-bottom:0.5em;color:#333;}.comment-body{margin-bottom:0.5em;line-height:1.4;word-break:break-word;}.comment-meta{font-size:0.85em;color:#666;font-style:italic;}"

@@ -39,7 +39,9 @@ function BookDetailsDialog:init()
     -- Layout constants
     local fb       = Size.border.window
     local fp       = Screen:scaleBySize(16)
-    local dialog_w = math.min(screen_w - 2 * fp, Screen:scaleBySize(520))
+    -- Use the shorter screen dimension so the dialog stays proportional in both
+    -- portrait and landscape, and on large tablets (10"+ devices).
+    local dialog_w = math.min(screen_w - 2 * fp, math.floor(math.min(screen_w, screen_h) * 0.92))
     local content_w = dialog_w - 2 * fb   -- inside the frame border (no frame padding)
     local inner_w   = content_w - 2 * fp  -- content with manual horizontal padding
 

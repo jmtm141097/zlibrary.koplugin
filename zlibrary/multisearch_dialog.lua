@@ -226,7 +226,7 @@ function CoverGrid:_visualCell(book)
                 dimen = Geom:new{ w = cover_w, h = cover_h },
                 TextWidget:new{
                     text = (book.title and book.title ~= "") and book.title:sub(1,1):upper() or "?",
-                    face = Font:getFace("cfont", math.max(14, math.floor(cover_h * 0.25))),
+                    face = Font:getFace("cfont", math.max(Screen:scaleBySize(14), math.floor(cover_h * 0.25))),
                 }
             }
         }
@@ -595,7 +595,7 @@ function SearchDialog:_makeMenuWidget(books, height, width)
         width = (width or self._frame_inner_width) - Screen:scaleBySize(6),
         height = height,
         item_table = self:_getMenuItems(books),
-        items_per_page = 5,
+        items_per_page = math.max(4, math.min(10, math.floor(height / Screen:scaleBySize(150)))),
         is_popout = false,
         no_title = true,
         show_captions = true,
