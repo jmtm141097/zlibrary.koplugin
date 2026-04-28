@@ -750,7 +750,11 @@ function Zlibrary:onSelectRecommendedBook(book_stub)
     end
 
     local on_success = function(ui_self, api_result, plugin_self)
-        logger.info(string.format("Zlibrary:onSelectRecommendedBook - Fetch successful for book ID: %s", api_result.book.id))
+        local desc = api_result.book.description
+        local desc_len = (type(desc) == "string") and #desc or 0
+        logger.info(string.format("Zlibrary:DEBUG - ID: %s, Desc type: %s, Length: %d", tostring(api_result.book.id), type(desc), desc_len))
+        if desc_len > 0 then logger.info("Zlibrary:DEBUG - Desc start: " .. string.sub(desc, 1, 50)) end
+        
         Ui.showBookDetails(self, api_result.book)
         book_cache:insert("details", api_result.book)
     end
@@ -805,7 +809,17 @@ function Zlibrary:onSelectSearchBook(book_data)
             end
 
             Ui.closeMessage(loading_msg)
-            logger.info(string.format("Zlibrary:onSelectSearchBook - Fetch successful for book ID: %s", api_result.book.id))
+            local desc = api_result.book.description
+            local desc_len = (type(desc) == "string") and #desc or 0
+            logger.info(string.format("Zlibrary:DEBUG-SEARCH - ID: %s, Desc type: %s, Length: %d", tostring(api_result.book.id), type(desc), desc_len))
+
+            -- Update original reference if it exists to avoid re-fetching in the same session
+            if type(book_data) == "table" and type(api_result.book) == "table" then
+                for k, v in pairs(api_result.book) do
+                    book_data[k] = v
+                end
+                book_data.needs_detail_fetch = false
+            end
 
             Ui.showBookDetails(self, api_result.book)
         end

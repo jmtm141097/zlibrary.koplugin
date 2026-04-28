@@ -121,11 +121,18 @@ function Ui.closeMessage(message_widget)
 end
 
 function Ui.showFullTextDialog(title, full_text)
+    if not full_text or full_text == "" then return end
     local dialog = TextViewer:new{
         title = title,
         text = full_text,
+        -- Ensure it takes up enough space
+        show_proportional_slider = true,
     }
-    _showAndTrackDialog(dialog)
+    if _plugin_instance and _plugin_instance.dialog_manager then
+        _plugin_instance.dialog_manager:showAndTrackDialog(dialog)
+    else
+        UIManager:show(dialog)
+    end
 end
 
 function Ui.showCoverDialog(title, img_path)
@@ -1215,24 +1222,31 @@ function Ui.showCommentsDialog(parent_zlibrary, book_comments)
     end
 
     local comments_popup
-    comments_popup = FootnoteWidget:new{
-        html = generateCommentsHTML(book_comments),
-        css = COMMENTS_CSS,
-        close_callback = function()
-            UIManager:close(comments_popup)
-        end,
-        dialog = UIManager:getTopmostVisibleWidget(),
-        doc_margins = {
-            left = Screen:scaleBySize(20),
-            right = Screen:scaleBySize(20),
-            top = Screen:scaleBySize(20),
-            bottom = Screen:scaleBySize(20),
-        },
-        doc_font_size = Screen:scaleBySize(23),
-        covers_footer = false,
-    }
+    local ok, err = pcall(function()
+        comments_popup = FootnoteWidget:new{
+            html = generateCommentsHTML(book_comments),
+            css = COMMENTS_CSS,
+            close_callback = function()
+                UIManager:close(comments_popup)
+            end,
+            dialog = UIManager:getTopmostVisibleWidget(),
+            doc_margins = {
+                left = Screen:scaleBySize(20),
+                right = Screen:scaleBySize(20),
+                top = Screen:scaleBySize(20),
+                bottom = Screen:scaleBySize(20),
+            },
+            doc_font_size = Screen:scaleBySize(23),
+            covers_footer = false,
+        }
+    end)
 
     Device.screen.getHeight = original_getHeight
+
+    if not ok then
+        logger.warn("Zlibrary:UI - FootnoteWidget creation failed:", err)
+        return
+    end
     _showAndTrackDialog(comments_popup)
 end
 

@@ -46,6 +46,25 @@ local function _transformApiBookData(api_books)
             -- Handle case where dl field contains 'exactEnd' - mark for detail fetch
             local download_url = book.dl
             local needs_detail_fetch = false
+            
+            -- If description is missing or invalid, we likely need to fetch full details (typical for search results)
+            local function _extractDesc(b)
+                local d = b.description or b.description_text or b.descriptionText or b.abstract
+                if type(d) == "table" then d = d.text or d.content or (d[1] and type(d[1]) == "string" and d[1]) end
+                return (type(d) == "string" and d ~= "") and d or nil
+            end
+            
+            local extracted_description = _extractDesc(book)
+            print("[[[ZLIB-DEBUG]]] API - Book ID: " .. tostring(book.id) .. " - Title: " .. tostring(book.title))
+            print("[[[ZLIB-DEBUG]]] API - Extracted Desc Length: " .. tostring(extracted_description and #extracted_description or 0))
+            if extracted_description then
+                print("[[[ZLIB-DEBUG]]] API - Desc Start: " .. string.sub(extracted_description, 1, 50))
+            end
+            
+            if not extracted_description then
+                needs_detail_fetch = true
+            end
+
             if download_url and type(download_url) == "string" and download_url == "exactEnd" then
                 needs_detail_fetch = true
                 download_url = nil  -- Clear the invalid URL
@@ -68,7 +87,7 @@ local function _transformApiBookData(api_books)
                 date_saved = book.date_saved,
                 needs_detail_fetch = needs_detail_fetch,
                 cover = book.cover,
-                description = book.description,
+                description = extracted_description,
                 publisher = book.publisher,
                 series = book.series,
                 pages = book.pages,
@@ -661,6 +680,18 @@ function Api.getBookDetails(user_id, user_key, book_id, book_hash)
     if not transformed_book then
         return { error = T("Failed to process book details.") }
     end
+
+    -- Fallback for description if not in book object but in other parts of response
+    if not transformed_book.description or transformed_book.description == "" then
+        local potential_desc = data.description or (data.file and data.file.description) or (data.book and (data.book.description_text or data.book.descriptionText or data.book.abstract))
+        if type(potential_desc) == "string" and potential_desc ~= "" then
+            transformed_book.description = potential_desc
+        end
+    end
+
+    -- Since we just fetched details, we mark it as NOT needing them anymore
+    transformed_book.needs_detail_fetch = false
+
     return { book = transformed_book }
 end
 

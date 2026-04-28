@@ -56,7 +56,8 @@ local CoverGrid = InputContainer:extend{
 }
 
 function CoverGrid:init()
-    local nav_h = Screen:scaleBySize(55)
+    self._nav_h = Screen:scaleBySize(55)
+    local nav_h = self._nav_h
     local safety_margin = Size.padding.default * 3
     local grid_h = self.height - nav_h - safety_margin
 
@@ -138,7 +139,7 @@ function CoverGrid:_build()
     })
 
     -- Pagination buttons
-    local nav_h    = Screen:scaleBySize(55)
+    local nav_h    = self._nav_h
     local btn_w    = math.floor(self.width * 0.25)
     local label_w  = self.width - 2 * btn_w
     
@@ -183,7 +184,7 @@ function CoverGrid:_build()
                 dimen = Geom:new{ w = label_w, h = nav_h },
                 TextWidget:new{
                     text = string.format("%d / %d", cur_page, total_pages),
-                    face = Font:getFace("cfont", 14),
+                    face = Font:getFace("cfont", Screen:scaleBySize(14)),
                 },
             },
             next_btn,
@@ -232,14 +233,14 @@ function CoverGrid:_visualCell(book)
 
         local title_text = TextWidget:new{
             text = book.title or T("Unknown Title"),
-            face = Font:getFace("cfont", 20),
+            face = Font:getFace("cfont", Screen:scaleBySize(20)),
             bold = true,
             max_width = text_w,
             align = "left",
         }
         local author_text = TextWidget:new{
             text = book.author or T("Unknown Author"),
-            face = Font:getFace("cfont", 16),
+            face = Font:getFace("cfont", Screen:scaleBySize(16)),
             max_width = text_w,
             align = "left",
         }
@@ -259,7 +260,7 @@ function CoverGrid:_visualCell(book)
         end
         local details_text = TextWidget:new{
             text = details_str,
-            face = Font:getFace("cfont", 14),
+            face = Font:getFace("cfont", Screen:scaleBySize(14)),
             max_width = text_w,
             align = "left",
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
@@ -326,7 +327,13 @@ function CoverGrid:_bookAtGesture(ges)
     if rx < 0 or ry < 0 or rx >= self.width or ry >= self._cell_h * self._visible_rows then
         return nil
     end
-    local col = math.min(math.floor(rx / self._cell_w), self.cols - 1)
+    local spacer_w = (self.cols > 1) and Size.padding.large or 0
+    local col_unit = self._cell_w + spacer_w
+    local col = math.floor(rx / col_unit)
+    if rx - col * col_unit >= self._cell_w then
+        return nil  -- tap fell on a spacer between columns
+    end
+    col = math.min(col, self.cols - 1)
     local row = math.floor(ry / self._cell_h)
     local idx = (self._first_visible_row + row) * self.cols + col + 1
     return self.books[idx]
@@ -496,7 +503,7 @@ function SearchDialog:init()
         }
         local tw = fiw - refresh_btn.width - (refresh_btn.padding_right or 0)
         self.toggle_switch = ToggleSwitch:new{
-            width = tw, font_size = 20, alternate = false,
+            width = tw, font_size = Screen:scaleBySize(20), alternate = false,
             enabled = (toggle_items_count ~= 1),
             toggle = toggle_text_list, values = toggle_values,
             config = {

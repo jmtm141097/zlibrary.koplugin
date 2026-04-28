@@ -20,6 +20,7 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local T = require("zlibrary.gettext")
 local Cache = require("zlibrary.cache")
 local util = require("util")
+local logger = require("logger")
 
 local BookDetailsDialog = InputContainer:extend{
     book = nil,
@@ -75,7 +76,7 @@ function BookDetailsDialog:init()
         bordercolor = Blitbuffer.COLOR_LIGHT_GRAY,
         cover_widget or CenterContainer:new{
             dimen = Geom:new{ w = cover_w - 2*border, h = cover_h - 2*border },
-            TextWidget:new{ text = "?", face = Font:getFace("cfont", 48) }
+            TextWidget:new{ text = "?", face = Font:getFace("cfont", Screen:scaleBySize(48)) }
         }
     }
 
@@ -85,14 +86,14 @@ function BookDetailsDialog:init()
         if val and val ~= "" and val ~= "N/A" and tostring(val) ~= "0" then
             table.insert(info_vg, TextWidget:new{
                 text      = label .. ": " .. tostring(val),
-                face      = Font:getFace("cfont", 16),
+                face      = Font:getFace("cfont", Screen:scaleBySize(16)),
                 max_width = info_w,
             })
         end
     end
     table.insert(info_vg, TextWidget:new{
         text      = author_text,
-        face      = Font:getFace("cfont", 20),
+        face      = Font:getFace("cfont", Screen:scaleBySize(20)),
         bold      = true,
         max_width = info_w,
     })
@@ -154,74 +155,119 @@ function BookDetailsDialog:init()
     }
     local buttons_h = buttons_table:getSize().h
 
-    -- 5. Description (only when text exists)
+    -- 5. Description (with placeholder if empty for debugging)
     local desc_text = ""
-    if type(self.book.description) == "string" and self.book.description ~= "" then
-        local raw = util.htmlEntitiesToUtf8(self.book.description)
-        -- Paragraph ends become blank lines
-        raw = raw:gsub("</%s*[Pp]%s*>", "\n\n")
-        -- <br> variants become single newlines
+    local book_description = self.book.description
+    if type(book_description) == "string" and book_description ~= "" then
+        local raw = util.htmlEntitiesToUtf8(book_description)
+        raw = raw:gsub("</?%s*[Pp]%s*>", "\n\n")
         raw = raw:gsub("<[Bb][Rr]%s*/?>", "\n")
-        -- Strip all remaining HTML tags (including empty ones like <>)
         raw = raw:gsub("<[^>]*>", "")
-        -- Normalize non-breaking space (UTF-8: \194\160) to regular space
         raw = raw:gsub("\194\160", " ")
-        -- Normalize line endings and collapse runs of 3+ blank lines into 2
         raw = raw:gsub("\r\n", "\n"):gsub("\r", "\n")
         raw = raw:gsub("\n[ \t]*\n[ \t]*\n+", "\n\n")
         desc_text = util.trim(raw)
     end
+
+    -- If still empty, add a placeholder to distinguish between "UI bug" and "No data"
+    if desc_text == "" then
+        desc_text = "(" .. T("No description available") .. ")"
+    end
+
     local description_widget
-    local desc_h = 0
     if desc_text ~= "" then
-        local max_desc_h = math.min(Screen:scaleBySize(200), math.floor(screen_h * 0.25))
-        local text_box = TextBoxWidget:new{
-            text  = desc_text,
-            face  = Font:getFace("cfont", 17),
-            width = inner_w,
+        local face = Font:getFace("cfont", Screen:scaleBySize(17))
+        
+        -- We show a shorter preview (300 chars) to ensure the button fits in the dialog
+        local is_long = #desc_text > 300
+        local preview_text = is_long and (string.sub(desc_text, 1, 297) .. "...") or desc_text
+
+        local label = TextWidget:new{
+            text = T("Description") .. (is_long and (" (" .. T("tap to view full") .. "):") or ":"),
+            face = Font:getFace("cfont", Screen:scaleBySize(16)),
+            bold = true,
+            max_width = inner_w,
         }
-        desc_h = math.min(text_box:getSize().h, max_desc_h)
-        description_widget = ScrollableContainer:new{
-            dimen  = Geom:new{ w = inner_w, h = desc_h },
-            widget = text_box,
+        
+        local text_content = TextBoxWidget:new{
+            text      = preview_text,
+            face      = face,
+            width     = inner_w,
+            alignment = "justify",
         }
+
+        local items = {
+            align = "left",
+            label,
+            WidgetContainer:new{ dimen = Geom:new{ w = inner_w, h = Screen:scaleBySize(4) } },
+            text_content,
+        }
+
+        -- If description is long, add a clear action to read it all
+        if is_long then
+            local read_more_btn = ButtonTable:new{
+                width = inner_w,
+                buttons = {{
+                    text = "\u{2139} " .. T("Read full description"),
+                    callback = function()
+                        logger.info("Zlibrary:Dialog - Opening full description viewer")
+                        -- Use UIManager to close current dialog and show new one if needed, 
+                        -- but showFullTextDialog should overlay.
+                        local Ui = require("zlibrary.ui")
+                        if Ui and Ui.showFullTextDialog then
+                            Ui.showFullTextDialog(T("Description"), desc_text)
+                        else
+                            logger.err("Zlibrary:Dialog - Ui.showFullTextDialog not found")
+                        end
+                    end,
+                }}
+            }
+            table.insert(items, WidgetContainer:new{ dimen = Geom:new{ w = inner_w, h = Screen:scaleBySize(6) } })
+            table.insert(items, read_more_btn)
+        end
+
+        description_widget = VerticalGroup:new(items)
     end
 
-    -- 6. Total dialog height (content + spacers + frame border)
-    local total_h = tb_h + cover_h + buttons_h + 3 * fp + 2 * fb
-    if description_widget then
-        total_h = total_h + desc_h + fp
-    end
-    total_h = math.min(total_h, math.floor(screen_h * 0.92))
-
-    -- 7. Assemble inner content
-    local main_layout = VerticalGroup:new{
+    -- 6. Scrollable body (cover + description)
+    local body_items = {
         align = "center",
         top_section,
         WidgetContainer:new{ dimen = Geom:new{ w = inner_w, h = fp } },
     }
     if description_widget then
-        table.insert(main_layout, description_widget)
-        table.insert(main_layout, WidgetContainer:new{ dimen = Geom:new{ w = inner_w, h = fp } })
+        table.insert(body_items, description_widget)
+        table.insert(body_items, WidgetContainer:new{ dimen = Geom:new{ w = inner_w, h = fp } })
     end
-    table.insert(main_layout, buttons_table)
+    local body_vg = VerticalGroup:new(body_items)
+    local body_natural_h = body_vg:getSize().h
+
+    -- 7. Compute dialog and scroll-area heights
+    local natural_h = tb_h + fp + body_natural_h + fp + buttons_h + 2 * fb
+    local dialog_h  = math.min(natural_h, math.floor(screen_h * 0.94))
+    local scroll_h  = math.max(dialog_h - tb_h - 2 * fp - buttons_h - 2 * fb, Screen:scaleBySize(60))
+
+    local scroll_area = ScrollableContainer:new{
+        dimen = Geom:new{ w = inner_w, h = scroll_h },
+        widget = body_vg,
+    }
 
     -- 8. Center dialog on screen
     self[1] = CenterContainer:new{
         dimen = Geom:new{ w = screen_w, h = screen_h },
         FrameContainer:new{
             width      = dialog_w,
-            height     = total_h,
+            height     = dialog_h,
             background = Blitbuffer.COLOR_WHITE,
             bordersize = fb,
             padding    = 0,
             VerticalGroup:new{
                 align = "center",
                 title_bar,
-                CenterContainer:new{
-                    dimen = Geom:new{ w = content_w, h = total_h - tb_h - 2*fb },
-                    main_layout,
-                },
+                WidgetContainer:new{ dimen = Geom:new{ w = content_w, h = fp } },
+                scroll_area,
+                WidgetContainer:new{ dimen = Geom:new{ w = content_w, h = fp } },
+                buttons_table,
             },
         },
     }
