@@ -35,6 +35,10 @@ local function Ui()
     return _Ui
 end
 
+local function font(n)
+    return math.max(n, math.floor(n * math.sqrt(Screen:getDPI() / 167) + 0.5))
+end
+
 local COVER_COLS = 1
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -184,7 +188,7 @@ function CoverGrid:_build()
                 dimen = Geom:new{ w = label_w, h = nav_h },
                 TextWidget:new{
                     text = string.format("%d / %d", cur_page, total_pages),
-                    face = Font:getFace("cfont", Screen:scaleBySize(14)),
+                    face = Font:getFace("cfont", font(14)),
                 },
             },
             next_btn,
@@ -226,21 +230,21 @@ function CoverGrid:_visualCell(book)
                 dimen = Geom:new{ w = cover_w, h = cover_h },
                 TextWidget:new{
                     text = (book.title and book.title ~= "") and book.title:sub(1,1):upper() or "?",
-                    face = Font:getFace("cfont", math.max(Screen:scaleBySize(14), math.floor(cover_h * 0.25))),
+                    face = Font:getFace("cfont", math.max(font(14), math.floor(cover_h * 0.25))),
                 }
             }
         }
 
         local title_text = TextWidget:new{
             text = book.title or T("Unknown Title"),
-            face = Font:getFace("cfont", Screen:scaleBySize(20)),
+            face = Font:getFace("cfont", font(20)),
             bold = true,
             max_width = text_w,
             align = "left",
         }
         local author_text = TextWidget:new{
             text = book.author or T("Unknown Author"),
-            face = Font:getFace("cfont", Screen:scaleBySize(16)),
+            face = Font:getFace("cfont", font(16)),
             max_width = text_w,
             align = "left",
         }
@@ -260,7 +264,7 @@ function CoverGrid:_visualCell(book)
         end
         local details_text = TextWidget:new{
             text = details_str,
-            face = Font:getFace("cfont", Screen:scaleBySize(14)),
+            face = Font:getFace("cfont", font(14)),
             max_width = text_w,
             align = "left",
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
@@ -503,7 +507,7 @@ function SearchDialog:init()
         }
         local tw = fiw - refresh_btn.width - (refresh_btn.padding_right or 0)
         self.toggle_switch = ToggleSwitch:new{
-            width = tw, font_size = Screen:scaleBySize(20), alternate = false,
+            width = tw, font_size = font(20), alternate = false,
             enabled = (toggle_items_count ~= 1),
             toggle = toggle_text_list, values = toggle_values,
             config = {

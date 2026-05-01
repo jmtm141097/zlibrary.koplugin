@@ -22,6 +22,12 @@ local Cache = require("zlibrary.cache")
 local util = require("util")
 local logger = require("logger")
 
+-- Damped font scaling: at 270 DPI gives ~1.27x instead of scaleBySize's ~1.62x,
+-- keeping text readable without growing disproportionately on high-DPI screens.
+local function font(n)
+    return math.max(n, math.floor(n * math.sqrt(Screen:getDPI() / 167) + 0.5))
+end
+
 local BookDetailsDialog = InputContainer:extend{
     book = nil,
     parent_zlibrary = nil,
@@ -78,7 +84,7 @@ function BookDetailsDialog:init()
         bordercolor = Blitbuffer.COLOR_LIGHT_GRAY,
         cover_widget or CenterContainer:new{
             dimen = Geom:new{ w = cover_w - 2*border, h = cover_h - 2*border },
-            TextWidget:new{ text = "?", face = Font:getFace("cfont", Screen:scaleBySize(48)) }
+            TextWidget:new{ text = "?", face = Font:getFace("cfont", font(48)) }
         }
     }
 
@@ -88,14 +94,14 @@ function BookDetailsDialog:init()
         if val and val ~= "" and val ~= "N/A" and tostring(val) ~= "0" then
             table.insert(info_vg, TextWidget:new{
                 text      = label .. ": " .. tostring(val),
-                face      = Font:getFace("cfont", Screen:scaleBySize(16)),
+                face      = Font:getFace("cfont", font(16)),
                 max_width = info_w,
             })
         end
     end
     table.insert(info_vg, TextWidget:new{
         text      = author_text,
-        face      = Font:getFace("cfont", Screen:scaleBySize(20)),
+        face      = Font:getFace("cfont", font(20)),
         bold      = true,
         max_width = info_w,
     })
@@ -196,14 +202,14 @@ function BookDetailsDialog:init()
             padding_h      = 0,
             padding_v      = Screen:scaleBySize(2),
             text_font_face = "cfont",
-            text_font_size = Screen:scaleBySize(16),
+            text_font_size = font(16),
             text_font_bold = true,
             align          = "left",
         }
 
         local text_content = TextBoxWidget:new{
             text      = preview_text,
-            face      = Font:getFace("cfont", Screen:scaleBySize(17)),
+            face      = Font:getFace("cfont", font(17)),
             width     = inner_w,
             alignment = "justify",
         }
